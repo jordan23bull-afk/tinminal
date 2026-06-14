@@ -50,293 +50,6 @@ export class ChartManager {
     };
     this.showVolume = true;
     this._activeTool = "crosshair";
-    this.alerts = this._loadAlerts();
-    this._alertLines = new Map();
-    this._initContextMenu();
-    this._requestNotificationPermission();
-  }
-
-  _requestNotificationPermission() {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission();
-    }
-  }
-
-  _loadAlerts() {
-    try {
-      return JSON.parse(localStorage.getItem("trading-alerts") || "[]");
-    } catch { return []; }
-  }
-
-  _saveAlerts() {
-    localStorage.setItem("trading-alerts", JSON.stringify(this.alerts));
-  }
-
-  _initContextMenu() {
-    this._ctxMenu = document.createElement("div");
-    this._ctxMenu.className = "chart-context-menu hidden";
-    document.body.appendChild(this._ctxMenu);
-
-    document.addEventListener("click", () => {
-      this._ctxMenu.classList.add("hidden");
-    });
-  }
-
-  _showContextMenu(e, chartId) {
-    const chartAlerts = this.alerts.filter(a => a.chartId === chartId && !a.triggered);
-    const currentSound = localStorage.getItem("alert-sound") || "chime";
-
-    let html = `
-      <div class="ctx-item" data-action="add-alert">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-        Добавить уведомление
-      </div>
-      <div class="ctx-sound-row">
-        <span>Звук:</span>
-        <select class="ctx-sound-select" data-action="select-sound">
-          <option value="chime" ${currentSound === "chime" ? "selected" : ""}>Звон</option>
-          <option value="beep" ${currentSound === "beep" ? "selected" : ""}>Бип</option>
-          <option value="alert" ${currentSound === "alert" ? "selected" : ""}>Тревога</option>
-          <option value="ding" ${currentSound === "ding" ? "selected" : ""}>Динг</option>
-          <option value="none" ${currentSound === "none" ? "selected" : ""}>Без звука</option>
-        </select>
-      </div>
-    `;
-
-    if (chartAlerts.length > 0) {
-      html += `<div class="ctx-separator"></div>`;
-      html += `<div class="ctx-label">Активные:</div>`;
-      chartAlerts.forEach(a => {
-        html += `
-          <div class="ctx-alert-item" data-action="remove-alert" data-alert-id="${a.id}">
-            <span class="ctx-alert-price">${a.symbol} — ${a.price}</span>
-            <span class="ctx-alert-x">&times;</span>
-          </div>
-        `;
-      });
-      html += `<div class="ctx-separator"></div>`;
-      html += `
-        <div class="ctx-item ctx-danger" data-action="clear-alerts">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-          Удалить все уведомления
-        </div>
-      `;
-    }
-
-    this._ctxMenu.innerHTML = html;
-    this._ctxData = { chartId };
-    this._ctxMenu.style.left = e.clientX + "px";
-    this._ctxMenu.style.top = e.clientY + "px";
-    this._ctxMenu.classList.remove("hidden");
-
-    this._ctxMenu.querySelectorAll("[data-action]").forEach(item => {
-      item.addEventListener("click", () => {
-        const action = item.dataset.action;
-        if (action === "add-alert") {
-          this.addAlert(chartId, this._ctxData.price);
-        } else if (action === "remove-alert") {
-          this.removeAlert(parseInt(item.dataset.alertId), chartId);
-        } else if (action === "clear-alerts") {
-          this.clearAlerts(chartId);
-        }
-        this._ctxMenu.classList.add("hidden");
-      });
-    });
-
-    const soundSelect = this._ctxMenu.querySelector("[data-action='select-sound']");
-    if (soundSelect) {
-      soundSelect.addEventListener("change", () => {
-        localStorage.setItem("alert-sound", soundSelect.value);
-      });
-      soundSelect.addEventListener("click", (e) => e.stopPropagation());
-    }
-  }
-
-  addAlert(chartId, price) {
-    const chartObj = this.charts.get(chartId);
-    if (!chartObj) return;
-    const symbol = chartObj.config.symbol || "???";
-
-    this.alerts.push({
-      id: Date.now(),
-      chartId,
-      symbol,
-      price,
-      triggered: false
-    });
-    this._saveAlerts();
-    this._renderAlertBadges(chartId);
-    log(`Alert added: ${symbol} @ ${price}`);
-  }
-
-  removeAlert(alertId, chartId) {
-    this.alerts = this.alerts.filter(a => a.id !== alertId);
-    this._saveAlerts();
-    this._renderAlertBadges(chartId);
-  }
-
-  clearAlerts(chartId) {
-    this.alerts = this.alerts.filter(a => a.chartId !== chartId);
-    this._saveAlerts();
-    this._renderAlertBadges(chartId);
-  }
-
-  _renderAlertBadges(chartId) {
-    const chartObj = this.charts.get(chartId);
-    if (!chartObj) return;
-
-    if (!chartObj._alertBadgeContainer) {
-      const container = document.createElement("div");
-      container.className = "alert-badge-container";
-      chartObj.container.appendChild(container);
-      chartObj._alertBadgeContainer = container;
-    }
-
-    const container = chartObj._alertBadgeContainer;
-    container.innerHTML = "";
-
-    const chartAlerts = this.alerts.filter(a => a.chartId === chartId && !a.triggered);
-    for (const alert of chartAlerts) {
-      const badge = document.createElement("div");
-      badge.className = "alert-badge";
-      badge.dataset.alertId = alert.id;
-
-      const bell = document.createElement("span");
-      bell.className = "alert-bell";
-      bell.textContent = "🔔";
-
-      const close = document.createElement("span");
-      close.className = "alert-close";
-      close.textContent = "×";
-      close.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.removeAlert(alert.id, chartId);
-      });
-
-      badge.appendChild(bell);
-      badge.appendChild(close);
-      container.appendChild(badge);
-    }
-
-    this._positionAlertBadges(chartId);
-  }
-
-  _positionAlertBadges(chartId) {
-    const chartObj = this.charts.get(chartId);
-    if (!chartObj || !chartObj._alertBadgeContainer) return;
-
-    const chart = chartObj.chart;
-    const wrapper = chartObj.container;
-    const wrapperRect = wrapper.getBoundingClientRect();
-
-    const chartAlerts = this.alerts.filter(a => a.chartId === chartId && !a.triggered);
-    const badges = chartObj._alertBadgeContainer.querySelectorAll(".alert-badge");
-
-    badges.forEach((badge, i) => {
-      const alert = chartAlerts[i];
-      if (!alert) return;
-
-      const y = chart.priceScale("right").priceToCoordinate(alert.price);
-      if (y == null) {
-        badge.style.display = "none";
-        return;
-      }
-
-      const headerH = chartObj.container.querySelector(".chart-header")?.offsetHeight || 0;
-      badge.style.display = "";
-      badge.style.top = (headerH + y - 10) + "px";
-      badge.style.right = "2px";
-    });
-  }
-
-  _initAlertBadgeUpdates() {
-    const update = () => {
-      for (const [id] of this.charts) {
-        this._positionAlertBadges(id);
-      }
-    };
-    for (const [, chartObj] of this.charts) {
-      chartObj.chart.timeScale().subscribeVisibleLogicalRangeChange(update);
-    }
-  }
-
-  checkAlerts(candle) {
-    for (const alert of this.alerts) {
-      if (alert.triggered) continue;
-      const chartObj = this.charts.get(alert.chartId);
-      if (!chartObj) continue;
-      if (chartObj.config.symbol !== alert.symbol) continue;
-
-      const hit = candle.high >= alert.price && candle.low <= alert.price;
-
-      if (hit) {
-        alert.triggered = true;
-        this._sendNotification(alert, candle);
-        this.removeAlert(alert.id, alert.chartId);
-      }
-    }
-  }
-
-  _sendNotification(alert, candle) {
-    const title = `${alert.symbol} — цена достигла ${alert.price}`;
-    const body = `Текущая цена: ${candle.close}`;
-
-    if ("Notification" in window && Notification.permission === "granted") {
-      const n = new Notification(title, {
-        body,
-        icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔔</text></svg>",
-        requireInteraction: false
-      });
-      n.onclick = () => { window.focus(); n.close(); };
-    }
-
-    const sound = localStorage.getItem("alert-sound") || "chime";
-    if (sound !== "none") {
-      this._playSound(sound);
-    }
-
-    log(`Alert triggered: ${title}`);
-  }
-
-  _playSound(type) {
-    try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-      const sounds = {
-        chime: [
-          { freq: 523, start: 0, dur: 0.15 },
-          { freq: 659, start: 0.12, dur: 0.15 },
-          { freq: 784, start: 0.24, dur: 0.2 },
-        ],
-        beep: [
-          { freq: 800, start: 0, dur: 0.15 },
-          { freq: 800, start: 0.2, dur: 0.15 },
-        ],
-        alert: [
-          { freq: 880, start: 0, dur: 0.1 },
-          { freq: 660, start: 0.12, dur: 0.1 },
-          { freq: 880, start: 0.24, dur: 0.1 },
-          { freq: 660, start: 0.36, dur: 0.1 },
-        ],
-        ding: [
-          { freq: 1200, start: 0, dur: 0.3 },
-        ],
-      };
-
-      const notes = sounds[type] || sounds.chime;
-      notes.forEach(note => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = note.freq;
-        osc.type = "sine";
-        gain.gain.setValueAtTime(0.3, ctx.currentTime + note.start);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + note.start + note.dur);
-        osc.start(ctx.currentTime + note.start);
-        osc.stop(ctx.currentTime + note.start + note.dur);
-      });
-    } catch (e) { /* audio not available */ }
   }
 
   _buildHeader(id) {
@@ -607,19 +320,6 @@ export class ChartManager {
       }
     });
 
-    const showCtx = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const price = chartObj.crosshairPrice;
-      if (price == null || isNaN(price)) return;
-
-      this._ctxData = { chartId: id, price: Math.round(price * 100) / 100 };
-      this._showContextMenu(e, id);
-    };
-
-    body.addEventListener("contextmenu", showCtx, true);
-    wrapper.addEventListener("contextmenu", showCtx, true);
-
     const mainSeries = this._createSeries(chart, chartType);
 
     chart.subscribeCrosshairMove((param) => {
@@ -687,7 +387,6 @@ export class ChartManager {
           if (chartObj._resizeTimer) clearTimeout(chartObj._resizeTimer);
           chartObj._resizeTimer = setTimeout(() => {
             chart.applyOptions({ width, height });
-            this._positionAlertBadges(id);
           }, 10);
         }
       }
@@ -710,10 +409,6 @@ export class ChartManager {
     });
 
     log(`Chart created: ${id} (${chartType}) ${w}x${h}`);
-    setTimeout(() => {
-      this._renderAlertBadges(id);
-      this._initAlertBadgeUpdates();
-    }, 300);
     return chartObj;
   }
 
@@ -843,8 +538,6 @@ export class ChartManager {
       value: candle.volume,
       color: candle.close >= candle.open ? "rgba(38, 166, 154, 0.5)" : "rgba(239, 83, 80, 0.5)"
     });
-
-    this.checkAlerts(candle);
   }
 
   changeChartType(id, newType) {
