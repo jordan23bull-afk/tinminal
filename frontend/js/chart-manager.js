@@ -128,12 +128,20 @@ export class ChartManager {
   }
 
   checkAlerts(candle) {
+    let changed = false;
     for (const alert of this.alerts) {
+      if (alert.triggered) continue;
       const chartObj = this.charts.get(alert.chartId);
       if (!chartObj || chartObj.config.symbol !== alert.symbol) continue;
       if (candle.high >= alert.price && candle.low <= alert.price) {
+        alert.triggered = true;
+        changed = true;
         this._sendNotification(alert, candle);
       }
+    }
+    if (changed) {
+      this.alerts = this.alerts.filter(a => !a.triggered);
+      this._saveAlerts();
     }
   }
 
@@ -150,24 +158,9 @@ export class ChartManager {
 
   _playSound() {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const notes = [
-        { freq: 523, start: 0, dur: 0.15 },
-        { freq: 659, start: 0.12, dur: 0.15 },
-        { freq: 784, start: 0.24, dur: 0.2 },
-      ];
-      notes.forEach(note => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = note.freq;
-        osc.type = "sine";
-        gain.gain.setValueAtTime(0.3, ctx.currentTime + note.start);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + note.start + note.dur);
-        osc.start(ctx.currentTime + note.start);
-        osc.stop(ctx.currentTime + note.start + note.dur);
-      });
+      const audio = new Audio("sounds/alert.wav");
+      audio.volume = 0.5;
+      audio.play().catch(() => {});
     } catch {}
   }
 
