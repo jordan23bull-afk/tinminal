@@ -1,0 +1,14 @@
+{
+  "available_sources": [
+    {
+      "name": "mock",
+      "description": "Mock data for testing",
+      "requires_api_key": false
+    },
+    {
+      "name": "binance",
+      "description": "Binance exchange API",
+      "requires_api_key": false
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "default_source": "mock",
+  "default_symbol": "BTCUSDT",
+  "default_timeframe": "1h",
+  "default_indicators": ["rsi"],
+  "theme": "dark"
+}

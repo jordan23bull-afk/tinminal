@@ -1,0 +1,224 @@
+/* Left Sidebar - Drawing Tools */
+.sidebar-left {
+  width: var(--sidebar-left-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  gap: 1px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.tool-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.tool-btn.active {
+  color: var(--accent-blue);
+  background: var(--bg-active);
+}
+
+.tool-separator {
+  width: 20px;
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+/* Right Sidebar - Watchlist */
+.sidebar-right {
+  width: var(--sidebar-right-width);
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.watchlist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.watchlist-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.watchlist-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+  padding: 0 4px;
+}
+
+.wl-tab {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 6px 6px;
+  font-size: 10px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition);
+}
+
+.wl-tab:hover {
+  color: var(--text-primary);
+}
+
+.wl-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--accent-blue);
+}
+
+.watchlist-items {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.watchlist-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 10px;
+  gap: 8px;
+  cursor: pointer;
+  transition: background var(--transition);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.watchlist-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.watchlist-item.selected {
+  background: var(--bg-active);
+}
+
+.wl-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  color: white;
+  flex-shrink: 0;
+}
+
+.wl-icon.btc { background: #f7931a; }
+.wl-icon.eth { background: #627eea; }
+.wl-icon.sol { background: #9945ff; }
+.wl-icon.bnb { background: #f3ba2f; }
+.wl-icon.xrp { background: #23292f; }
+.wl-icon.doge { background: #c2a633; }
+.wl-icon.ada { background: #0033ad; }
+.wl-icon.avax { background: #e84142; }
+.wl-icon.moex { background: #1a73e8; }
+
+.wl-section-header {
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.wl-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.wl-symbol {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wl-price {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.wl-change {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.wl-change.positive {
+  color: var(--accent-green);
+}
+
+.wl-change.negative {
+  color: var(--accent-red);
+}
+
+/* Price Info at bottom of watchlist */
+.price-info {
+  padding: 10px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+}
+
+.current-price {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.price-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent-green);
+  letter-spacing: 0.5px;
+}
+
+.price-currency {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.price-change {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.change-abs {
+  color: var(--accent-green);
+}
+
+.change-pct {
+  color: var(--accent-green);
+}

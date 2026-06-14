@@ -1,0 +1,19 @@
+{
+  "available_indicators": [
+    {
+      "name": "rsi",
+      "description": "Relative Strength Index",
+      "parameters": {"period": 14, "source": "close"}
+    },
+    {
+      "name": "macd",
+      "description": "Moving Average Convergence Divergence",
+      "parameters": {"fast": 12, "slow": 26, "signal": 9, "source": "close"}
+    },
+    {
+      "name": "sma",
+      "description": "Simple Moving Average",
+      "parameters": {"period": 50, "source": "close"}
+    }
+  ]
+}
