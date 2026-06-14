@@ -50,6 +50,125 @@ export class ChartManager {
     };
     this.showVolume = true;
     this._activeTool = "crosshair";
+    this.alerts = this._loadAlerts();
+    this._initContextMenu();
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }
+
+  _loadAlerts() {
+    try {
+      return JSON.parse(localStorage.getItem("trading-alerts") || "[]");
+    } catch { return []; }
+  }
+
+  _saveAlerts() {
+    localStorage.setItem("trading-alerts", JSON.stringify(this.alerts));
+  }
+
+  _initContextMenu() {
+    this._ctxMenu = document.createElement("div");
+    this._ctxMenu.className = "hline-ctx hidden";
+    document.body.appendChild(this._ctxMenu);
+    document.addEventListener("click", () => this._ctxMenu.classList.add("hidden"));
+  }
+
+  _showContextMenu(e, chartId, price) {
+    const existing = this.alerts.find(a => a.chartId === chartId && a.price === price);
+    let html = "";
+    if (!existing) {
+      html += `<div class="hline-ctx-item" data-action="add-alert">Добавить алерт</div>`;
+    } else {
+      html += `<div class="hline-ctx-item" data-action="remove-alert">Удалить алерт</div>`;
+    }
+    html += `<div class="hline-ctx-item hline-ctx-danger" data-action="remove-line">Удалить линию</div>`;
+    this._ctxMenu.innerHTML = html;
+    this._ctxData = { chartId, price };
+    this._ctxMenu.style.left = e.clientX + "px";
+    this._ctxMenu.style.top = e.clientY + "px";
+    this._ctxMenu.classList.remove("hidden");
+    this._ctxMenu.querySelectorAll(".hline-ctx-item").forEach(item => {
+      item.addEventListener("click", () => {
+        const action = item.dataset.action;
+        if (action === "add-alert") {
+          this.addAlert(chartId, price);
+        } else if (action === "remove-alert") {
+          this.removeAlert(chartId, price);
+        } else if (action === "remove-line") {
+          this._removeLineByPrice(chartId, price);
+        }
+        this._ctxMenu.classList.add("hidden");
+      });
+    });
+  }
+
+  addAlert(chartId, price) {
+    const chartObj = this.charts.get(chartId);
+    const symbol = chartObj ? chartObj.config.symbol : "???";
+    this.alerts.push({ chartId, symbol, price, id: Date.now() });
+    this._saveAlerts();
+    log(`Alert added: ${symbol} @ ${price}`);
+  }
+
+  removeAlert(chartId, price) {
+    this.alerts = this.alerts.filter(a => !(a.chartId === chartId && a.price === price));
+    this._saveAlerts();
+  }
+
+  _removeLineByPrice(chartId, price) {
+    const chartObj = this.charts.get(chartId);
+    if (!chartObj) return;
+    const line = chartObj._horizontalLines.find(l => Math.abs(l.options().price - price) < 0.001);
+    if (line) {
+      chartObj.mainSeries.removePriceLine(line);
+      chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== line);
+    }
+    this.removeAlert(chartId, price);
+  }
+
+  checkAlerts(candle) {
+    for (const alert of this.alerts) {
+      const chartObj = this.charts.get(alert.chartId);
+      if (!chartObj || chartObj.config.symbol !== alert.symbol) continue;
+      if (candle.high >= alert.price && candle.low <= alert.price) {
+        this._sendNotification(alert, candle);
+      }
+    }
+  }
+
+  _sendNotification(alert, candle) {
+    const title = `${alert.symbol} — ${alert.price}`;
+    const body = `Цена: ${candle.close}`;
+    if ("Notification" in window && Notification.permission === "granted") {
+      const n = new Notification(title, { body, requireInteraction: false });
+      n.onclick = () => { window.focus(); n.close(); };
+    }
+    this._playSound();
+    log(`Alert: ${title}`);
+  }
+
+  _playSound() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const notes = [
+        { freq: 523, start: 0, dur: 0.15 },
+        { freq: 659, start: 0.12, dur: 0.15 },
+        { freq: 784, start: 0.24, dur: 0.2 },
+      ];
+      notes.forEach(note => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = note.freq;
+        osc.type = "sine";
+        gain.gain.setValueAtTime(0.3, ctx.currentTime + note.start);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + note.start + note.dur);
+        osc.start(ctx.currentTime + note.start);
+        osc.stop(ctx.currentTime + note.start + note.dur);
+      });
+    } catch {}
   }
 
   _buildHeader(id) {
@@ -365,6 +484,23 @@ export class ChartManager {
       document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
     }, true);
 
+    body.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const rect = body.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      let closest = null;
+      let minDist = Infinity;
+      for (const line of chartObj._horizontalLines) {
+        const lineY = mainSeries.priceToCoordinate(line.options().price);
+        if (lineY == null) continue;
+        const dist = Math.abs(y - lineY);
+        if (dist < minDist) { minDist = dist; closest = line; }
+      }
+      if (closest && minDist < 20) {
+        this._showContextMenu(e, id, closest.options().price);
+      }
+    });
+
     const volumeSeries = chart.addHistogramSeries({
       color: "#26a69a",
       priceFormat: { type: "volume" },
@@ -538,6 +674,8 @@ export class ChartManager {
       value: candle.volume,
       color: candle.close >= candle.open ? "rgba(38, 166, 154, 0.5)" : "rgba(239, 83, 80, 0.5)"
     });
+
+    this.checkAlerts(candle);
   }
 
   changeChartType(id, newType) {

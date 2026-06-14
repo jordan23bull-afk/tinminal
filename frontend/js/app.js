@@ -29,6 +29,9 @@ function loadChartData(chartId, symbol, timeframe, source, chartType) {
         }
 
         chartManager.updateData(chartId, data.candles, indicatorData);
+        if (data.candles.length > 0) {
+          chartManager.checkAlerts(data.candles[data.candles.length - 1]);
+        }
       }
     })
     .catch(e => log("Load chart data error:", e));
