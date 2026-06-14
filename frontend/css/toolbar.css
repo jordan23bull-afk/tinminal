@@ -572,3 +572,8 @@
   background: white;
   left: 18px;
 }
+
+/* Watchlist Toggle */
+.sidebar-right.hidden {
+  display: none;
+}

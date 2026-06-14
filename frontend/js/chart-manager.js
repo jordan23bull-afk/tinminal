@@ -49,6 +49,7 @@ export class ChartManager {
       sma: "#e91e63"
     };
     this.showVolume = true;
+    this._activeTool = "crosshair";
     this.alerts = this._loadAlerts();
     this._alertLines = new Map();
     this._initContextMenu();
@@ -575,7 +576,9 @@ export class ChartManager {
       indicators: {},
       container: wrapper,
       body: body,
-      _resizeTimer: null
+      _resizeTimer: null,
+      _horizontalLines: [],
+      crosshairPrice: null
     };
     this.charts.set(id, chartObj);
 
@@ -604,12 +607,10 @@ export class ChartManager {
       }
     });
 
-    let crosshairPrice = null;
-
     const showCtx = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const price = crosshairPrice;
+      const price = chartObj.crosshairPrice;
       if (price == null || isNaN(price)) return;
 
       this._ctxData = { chartId: id, price: Math.round(price * 100) / 100 };
@@ -624,9 +625,45 @@ export class ChartManager {
     chart.subscribeCrosshairMove((param) => {
       if (param && param.time) {
         const data = param.seriesData.get(mainSeries);
-        if (data) crosshairPrice = data.close || data.value || null;
+        if (data) chartObj.crosshairPrice = data.close || data.value || null;
       }
     });
+
+    body.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (this._activeTool !== "horizontal") return;
+      const rect = body.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      const price = mainSeries.coordinateToPrice(y);
+      if (price == null || isNaN(price)) return;
+      this.addHorizontalLine(id, price);
+      this._activeTool = "crosshair";
+      document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
+      document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
+    }, true);
+
+    body.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (this._activeTool !== "eraser") return;
+      if (chartObj._horizontalLines.length === 0) return;
+      const rect = body.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      let closest = null;
+      let minDist = Infinity;
+      for (const line of chartObj._horizontalLines) {
+        const lineY = mainSeries.priceToCoordinate(line.options().price);
+        if (lineY == null) continue;
+        const dist = Math.abs(y - lineY);
+        if (dist < minDist) { minDist = dist; closest = line; }
+      }
+      if (closest && minDist < 20) {
+        mainSeries.removePriceLine(closest);
+        chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== closest);
+      }
+      this._activeTool = "crosshair";
+      document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
+      document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
+    }, true);
 
     const volumeSeries = chart.addHistogramSeries({
       color: "#26a69a",
@@ -834,12 +871,37 @@ export class ChartManager {
     if (!chartObj) return;
     if (chartObj._resizeObserver) chartObj._resizeObserver.disconnect();
     if (chartObj._resizeTimer) clearTimeout(chartObj._resizeTimer);
+    this.removeAllHorizontalLines(id);
     chartObj.chart.remove();
     if (chartObj.container.parentNode) {
       chartObj.container.parentNode.removeChild(chartObj.container);
     }
     this.charts.delete(id);
     log(`Chart removed: ${id}`);
+  }
+
+  addHorizontalLine(chartId, price) {
+    const chartObj = this.charts.get(chartId);
+    if (!chartObj || !chartObj.mainSeries) return;
+    const line = chartObj.mainSeries.createPriceLine({
+      price,
+      color: "#2196F3",
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: ""
+    });
+    chartObj._horizontalLines.push(line);
+    log(`Horizontal line added at ${price}`);
+  }
+
+  removeAllHorizontalLines(chartId) {
+    const chartObj = this.charts.get(chartId);
+    if (!chartObj) return;
+    for (const line of chartObj._horizontalLines) {
+      chartObj.mainSeries.removePriceLine(line);
+    }
+    chartObj._horizontalLines = [];
   }
 
   getAllChartIds() {

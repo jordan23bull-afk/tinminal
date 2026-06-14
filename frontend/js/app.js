@@ -44,7 +44,6 @@ const layoutManager = new LayoutManager(document.getElementById("charts-grid"));
 
 const sourceSelect = document.getElementById("source-select");
 const symbolInput = document.getElementById("symbol-input");
-const chartTypeSelect = document.getElementById("chart-type-select");
 
 // Symbol Search
 const symbolSearch = document.getElementById("symbol-search");
@@ -129,8 +128,6 @@ document.addEventListener("click", (e) => {
     closeSymbolSearch();
   }
 });
-const indicatorsBtn = document.getElementById("indicators-btn");
-const indicatorDropdown = document.getElementById("indicator-dropdown");
 const statusText = document.getElementById("status-text");
 const connectionStatus = document.getElementById("status-connection");
 const currentTimeEl = document.getElementById("current-time");
@@ -156,44 +153,6 @@ wsClient.on("candleUpdate", (symbol, timeframe, candle) => {
 });
 
 wsClient.connect();
-
-// Timeframe buttons
-const timeframeButtons = document.querySelectorAll(".timeframe-buttons button");
-timeframeButtons.forEach(btn => {
-  btn.addEventListener("click", () => {
-    timeframeButtons.forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    selectedTimeframe = btn.dataset.tf;
-    autoLoad();
-  });
-});
-
-// Bottom timeframe buttons
-const bottomTimeframeButtons = document.querySelectorAll(".bottom-timeframe-buttons button");
-bottomTimeframeButtons.forEach(btn => {
-  btn.addEventListener("click", () => {
-    bottomTimeframeButtons.forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-  });
-});
-
-// Indicators dropdown
-indicatorsBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  indicatorDropdown.classList.toggle("hidden");
-});
-
-document.addEventListener("click", () => {
-  indicatorDropdown.classList.add("hidden");
-});
-
-indicatorDropdown.querySelectorAll("button").forEach(btn => {
-  btn.addEventListener("click", () => {
-    const indicator = btn.dataset.indicator;
-    autoLoad(indicator);
-    indicatorDropdown.classList.add("hidden");
-  });
-});
 
 // Watchlist items
 document.querySelectorAll(".watchlist-item").forEach(item => {
@@ -227,7 +186,13 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach(btn => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
+    chartManager._activeTool = btn.dataset.tool;
   });
+});
+
+// Watchlist toggle
+document.getElementById("watchlist-toggle").addEventListener("click", () => {
+  document.querySelector(".sidebar-right").classList.toggle("hidden");
 });
 
 async function loadSources() {
@@ -251,7 +216,7 @@ async function loadHistory(forceChartId = null, indicatorName = null) {
   const source = sourceSelect.value;
   const symbol = symbolInput.value.trim().toUpperCase();
   const timeframe = selectedTimeframe;
-  const chartType = chartTypeSelect.value;
+  const chartType = "candlestick";
 
   if (!symbol) return;
 
@@ -421,7 +386,7 @@ function selectLayout(count, optionIndex) {
         const symbol = symbolInput.value.trim().toUpperCase();
         const timeframe = selectedTimeframe;
         const source = sourceSelect.value;
-        const chartType = chartTypeSelect.value;
+        const chartType = "candlestick";
         chartManager.createChart(id, { symbol, timeframe, source, chartType });
         loadHistory(id);
       }
@@ -462,7 +427,8 @@ function saveState() {
       source: chartObj.config.source || "mock",
       timeframe: chartObj.config.timeframe || "4h",
       chartType: chartObj.chartType || "candlestick",
-      indicators: Object.keys(chartObj.indicators)
+      indicators: Object.keys(chartObj.indicators),
+      horizontalLines: chartObj._horizontalLines.map(l => l.options().price)
     });
   }
   const state = {
@@ -501,10 +467,6 @@ function restoreState(state) {
   sourceSelect.value = state.source || "mock";
   symbolSearchValue.textContent = state.symbol || "BTCUSDT";
 
-  document.querySelectorAll(".timeframe-buttons button").forEach(b => {
-    b.classList.toggle("active", b.dataset.tf === selectedTimeframe);
-  });
-
   layoutManager.setLayoutByCount(currentLayoutCount, currentLayoutOption);
   layoutTriggerText.textContent = currentLayoutCount;
 
@@ -533,6 +495,14 @@ function restoreState(state) {
         }
 
         loadChartData(id, chartCfg.symbol, chartCfg.timeframe, chartCfg.source, chartCfg.chartType);
+
+        if (chartCfg.horizontalLines && chartCfg.horizontalLines.length > 0) {
+          setTimeout(() => {
+            chartCfg.horizontalLines.forEach(price => {
+              chartManager.addHorizontalLine(id, price);
+            });
+          }, 300);
+        }
       });
       layoutManager.applyLayout();
     }, 50);
