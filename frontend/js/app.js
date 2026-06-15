@@ -1,4 +1,4 @@
-import { ChartManager } from "./chart-manager.js";
+import { ChartManager, addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns } from "./chart-manager.js";
 import { WSClient } from "./ws-client.js";
 import { LayoutManager } from "./layout-manager.js";
 import { generateId, log } from "./utils.js";
@@ -76,8 +76,9 @@ wsClient.on("candleUpdate", (symbol, timeframe, candle) => {
 wsClient.connect();
 
 // Watchlist items
-document.querySelectorAll(".watchlist-item").forEach(item => {
-  item.addEventListener("click", () => {
+function setupWatchlistItem(item) {
+  item.addEventListener("click", (e) => {
+    if (e.target.closest(".wl-delete")) return;
     document.querySelectorAll(".watchlist-item").forEach(i => i.classList.remove("selected"));
     item.classList.add("selected");
     const symbol = item.dataset.symbol;
@@ -96,9 +97,98 @@ document.querySelectorAll(".watchlist-item").forEach(item => {
     symbolInput.value = symbol;
     sourceSelect.value = source;
   });
-});
 
+  if (!item.querySelector(".wl-delete")) {
+    const del = document.createElement("button");
+    del.className = "wl-delete";
+    del.innerHTML = "🗑";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const ticker = item.dataset.symbol;
+      item.remove();
+      removeSymbolFromAll(ticker);
+    });
+    item.appendChild(del);
+  }
+}
 
+document.querySelectorAll(".watchlist-item").forEach(setupWatchlistItem);
+
+// Custom tickers
+const CUSTOM_TICKERS_KEY = "trading-dashboard-custom-tickers";
+
+function loadCustomTickers() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_TICKERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveCustomTickers(tickers) {
+  localStorage.setItem(CUSTOM_TICKERS_KEY, JSON.stringify(tickers));
+}
+
+function addCustomTicker(ticker, name) {
+  ticker = ticker.toUpperCase().trim();
+  if (!ticker) return;
+  name = name || ticker;
+  addSymbolToList(ticker, name);
+  refreshAllSymbolDropdowns();
+
+  const wlItems = document.querySelector(".watchlist-items");
+  const div = document.createElement("div");
+  div.className = "watchlist-item";
+  div.dataset.symbol = ticker;
+  div.dataset.source = "moex";
+  div.innerHTML = `<div class="wl-icon moex">${name.charAt(0)}</div><div class="wl-info"><span class="wl-symbol">${ticker}</span><span class="wl-price">—</span></div><span class="wl-change">—</span>`;
+  setupWatchlistItem(div);
+  wlItems.appendChild(div);
+
+  const tickers = loadCustomTickers();
+  if (!tickers.find(t => t.ticker === ticker)) {
+    tickers.push({ ticker, name });
+    saveCustomTickers(tickers);
+  }
+}
+
+// Restore custom tickers from localStorage
+loadCustomTickers().forEach(t => addCustomTicker(t.ticker, t.name));
+
+// "+" button in watchlist
+const addTickerBtn = document.querySelector(".watchlist-header .icon-btn-sm");
+if (addTickerBtn) {
+  addTickerBtn.addEventListener("click", () => {
+    const input = prompt("Введите тикер MOEX (например TATN, ROSN, BANE):");
+    if (!input) return;
+    const ticker = input.toUpperCase().trim();
+    if (!ticker) return;
+    addCustomTicker(ticker, ticker);
+  });
+}
+
+// Sidebar resize
+const sidebarResize = document.getElementById("sidebar-resize");
+const sidebarRight = document.querySelector(".sidebar-right");
+if (sidebarResize && sidebarRight) {
+  let startX, startW;
+  sidebarResize.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    startX = e.clientX;
+    startW = sidebarRight.offsetWidth;
+    sidebarResize.classList.add("active");
+    const onMove = (e) => {
+      const w = startW - (e.clientX - startX);
+      sidebarRight.style.width = Math.max(120, Math.min(w, 500)) + "px";
+    };
+    const onUp = () => {
+      sidebarResize.classList.remove("active");
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+}
 
 // Update clock
 function updateClock() {

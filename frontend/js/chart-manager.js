@@ -15,6 +15,41 @@ const SYMBOLS = [
   { ticker: "GMKNP", name: "Норникель-П", source: "moex", icon: "Н" },
 ];
 
+function addSymbolToList(ticker, name) {
+  if (SYMBOLS.find(s => s.ticker === ticker)) return false;
+  const icon = name.charAt(0).toUpperCase();
+  SYMBOLS.push({ ticker, name, source: "moex", icon });
+  return true;
+}
+
+function removeSymbolFromAll(ticker) {
+  const idx = SYMBOLS.findIndex(s => s.ticker === ticker);
+  if (idx >= 0) SYMBOLS.splice(idx, 1);
+  refreshAllSymbolDropdowns();
+  try {
+    const raw = localStorage.getItem("trading-dashboard-custom-tickers");
+    const tickers = raw ? JSON.parse(raw) : [];
+    const filtered = tickers.filter(t => t.ticker !== ticker);
+    localStorage.setItem("trading-dashboard-custom-tickers", JSON.stringify(filtered));
+  } catch {}
+}
+
+function refreshAllSymbolDropdowns() {
+  document.querySelectorAll(".ch-symbol-dropdown").forEach(dropdown => {
+    const list = dropdown.querySelector(".ch-symbol-list");
+    if (!list) return;
+    list.innerHTML = "";
+    SYMBOLS.forEach(s => {
+      const item = document.createElement("div");
+      item.className = "ch-symbol-item";
+      item.dataset.ticker = s.ticker;
+      item.dataset.source = s.source;
+      item.innerHTML = `<span class="ch-si-icon">${s.icon}</span><span class="ch-si-name">${s.name}</span><span class="ch-si-ticker">${s.ticker}</span>`;
+      list.appendChild(item);
+    });
+  });
+}
+
 const TIMEFRAMES = [
   { tf: "1m", label: "1m" },
   { tf: "5m", label: "5m" },
@@ -237,6 +272,18 @@ export class ChartManager {
         const match = item.dataset.ticker.includes(q) || item.querySelector(".ch-si-name").textContent.toUpperCase().includes(q);
         item.style.display = match ? "" : "none";
       });
+    });
+
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        const ticker = searchInput.value.trim().toUpperCase();
+        if (ticker) {
+          symbolBtn.textContent = ticker;
+          symbolDropdown.classList.add("hidden");
+          this._updateChartConfig(id, { symbol: ticker, source: "moex" });
+          this._reloadChart(id);
+        }
+      }
     });
 
     list.querySelectorAll(".ch-symbol-item").forEach(item => {
@@ -791,3 +838,5 @@ export class ChartManager {
     }
   }
 }
+
+export { addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns };
