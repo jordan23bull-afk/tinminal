@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class ModuleRegistry:
     _data_sources = {}
     _indicators = {}
+    _source_instances = {}
 
     @classmethod
     def register_data_source(cls, cls_type: Type[IDataSource]):
@@ -50,7 +51,9 @@ class ModuleRegistry:
     def get_data_source(cls, name: str) -> IDataSource:
         if name not in cls._data_sources:
             raise ValueError(f"Unknown data source: {name}")
-        return cls._data_sources[name]()
+        if name not in cls._source_instances:
+            cls._source_instances[name] = cls._data_sources[name]()
+        return cls._source_instances[name]
 
     @classmethod
     def get_indicator(cls, name: str) -> IIndicator:

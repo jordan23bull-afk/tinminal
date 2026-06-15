@@ -1,6 +1,6 @@
 {
-  "default_source": "mock",
-  "default_symbol": "BTCUSDT",
+  "default_source": "moex",
+  "default_symbol": "SBER",
   "default_timeframe": "1h",
   "default_indicators": ["rsi"],
   "theme": "dark"

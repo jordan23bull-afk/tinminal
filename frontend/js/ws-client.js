@@ -61,7 +61,7 @@ export class WSClient {
     this.subscriptions.clear();
   }
 
-  subscribe(symbol, timeframe, source = "mock") {
+  subscribe(symbol, timeframe, source = "moex") {
     const room = `${symbol}_${timeframe}`;
     this.subscriptions.set(room, { symbol, timeframe, source });
     if (this.connected) {

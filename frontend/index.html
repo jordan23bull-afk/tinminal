@@ -17,131 +17,8 @@
     <!-- Top Toolbar -->
     <header class="toolbar">
       <div class="toolbar-left">
-        <div class="symbol-search" id="symbol-search">
-          <div class="symbol-search-trigger" id="symbol-search-trigger">
-            <span class="exchange-icon">₿</span>
-            <span class="symbol-search-value" id="symbol-search-value">BTCUSDT</span>
-            <svg class="symbol-search-arrow" width="10" height="6" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg>
-          </div>
-          <div class="symbol-search-dropdown hidden" id="symbol-search-dropdown">
-            <input type="text" class="symbol-search-input" id="symbol-search-input" placeholder="Поиск тикера..." autofocus>
-            <div class="symbol-search-list" id="symbol-search-list">
-              <div class="symbol-search-group">
-                <div class="symbol-search-group-title">MOEX</div>
-                <div class="symbol-search-item" data-symbol="SBER" data-source="moex">
-                  <span class="ss-icon moex">С</span>
-                  <span class="ss-name">Сбербанк</span>
-                  <span class="ss-ticker">SBER</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="GAZP" data-source="moex">
-                  <span class="ss-icon moex">Г</span>
-                  <span class="ss-name">Газпром</span>
-                  <span class="ss-ticker">GAZP</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="LKOH" data-source="moex">
-                  <span class="ss-icon moex">Л</span>
-                  <span class="ss-name">Лукойл</span>
-                  <span class="ss-ticker">LKOH</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="YDEX" data-source="moex">
-                  <span class="ss-icon moex">Я</span>
-                  <span class="ss-name">Яндекс</span>
-                  <span class="ss-ticker">YDEX</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="GMKN" data-source="moex">
-                  <span class="ss-icon moex">Н</span>
-                  <span class="ss-name">Норникель</span>
-                  <span class="ss-ticker">GMKN</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="ROSN" data-source="moex">
-                  <span class="ss-icon moex">Р</span>
-                  <span class="ss-name">Роснефть</span>
-                  <span class="ss-ticker">ROSN</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="SNGS" data-source="moex">
-                  <span class="ss-icon moex">С</span>
-                  <span class="ss-name">Сургутнефтегаз</span>
-                  <span class="ss-ticker">SNGS</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="VTBR" data-source="moex">
-                  <span class="ss-icon moex">В</span>
-                  <span class="ss-name">ВТБ</span>
-                  <span class="ss-ticker">VTBR</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="TCSG" data-source="moex">
-                  <span class="ss-icon moex">Т</span>
-                  <span class="ss-name">Т-Банк</span>
-                  <span class="ss-ticker">TCSG</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="PHOR" data-source="moex">
-                  <span class="ss-icon moex">Ф</span>
-                  <span class="ss-name">Фосагро</span>
-                  <span class="ss-ticker">PHOR</span>
-                </div>
-              </div>
-              <div class="symbol-search-group">
-                <div class="symbol-search-group-title">Crypto</div>
-                <div class="symbol-search-item" data-symbol="BTCUSDT" data-source="mock">
-                  <span class="ss-icon btc">₿</span>
-                  <span class="ss-name">Bitcoin</span>
-                  <span class="ss-ticker">BTCUSDT</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="ETHUSDT" data-source="mock">
-                  <span class="ss-icon eth">Ξ</span>
-                  <span class="ss-name">Ethereum</span>
-                  <span class="ss-ticker">ETHUSDT</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="SOLUSDT" data-source="mock">
-                  <span class="ss-icon sol">◎</span>
-                  <span class="ss-name">Solana</span>
-                  <span class="ss-ticker">SOLUSDT</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="BNBUSDT" data-source="mock">
-                  <span class="ss-icon bnb">B</span>
-                  <span class="ss-name">BNB</span>
-                  <span class="ss-ticker">BNBUSDT</span>
-                </div>
-                <div class="symbol-search-item" data-symbol="XRPUSDT" data-source="mock">
-                  <span class="ss-icon xrp">X</span>
-                  <span class="ss-name">XRP</span>
-                  <span class="ss-ticker">XRPUSDT</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-        <input type="hidden" id="symbol-input" value="BTCUSDT">
-        <input type="hidden" id="source-select" value="mock">
-        <div class="toolbar-separator"></div>
-        <div class="timeframe-buttons">
-          <button data-tf="1m">1m</button>
-          <button data-tf="5m">5m</button>
-          <button data-tf="15m">15m</button>
-          <button data-tf="1h">1ч</button>
-          <button data-tf="2h">2ч</button>
-          <button data-tf="3h">3ч</button>
-          <button data-tf="4h" class="active">4ч</button>
-          <button data-tf="1d">Д</button>
-          <button data-tf="1w">Н</button>
-          <button data-tf="1M">М</button>
-        </div>
-        <div class="toolbar-separator"></div>
-        <select id="chart-type-select" class="chart-type-select">
-          <option value="candlestick">Candlestick</option>
-          <option value="line">Line</option>
-          <option value="area">Area</option>
-          <option value="bar">Bar</option>
-        </select>
-        <div class="toolbar-separator"></div>
-        <button id="indicators-btn" class="toolbar-btn">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 12h2V7H2v5zm4 0h2V4H6v8zm4 0h2V2h-2v10zm4 0h2V6h-2v6z"/></svg>
-          Индикаторы
-        </button>
-        <div id="indicator-dropdown" class="dropdown-menu hidden">
-          <button data-indicator="rsi">RSI</button>
-          <button data-indicator="macd">MACD</button>
-          <button data-indicator="sma">SMA</button>
-        </div>
+        <input type="hidden" id="symbol-input" value="SBER">
+        <input type="hidden" id="source-select" value="moex">
       </div>
       <div class="toolbar-right">
         <span id="connection-status" class="status-disconnected">Disconnected</span>
@@ -154,7 +31,6 @@
               <rect x="9" y="9" width="6" height="6" rx="1"/>
             </svg>
             <span class="layout-trigger-text" id="layout-trigger-text">1</span>
-            <svg class="layout-arrow" width="8" height="5" viewBox="0 0 8 5"><path d="M1 1l3 3 3-3" stroke="currentColor" stroke-width="1.2" fill="none"/></svg>
           </button>
           <div class="layout-dropdown hidden" id="layout-dropdown">
             <div class="layout-grid" id="layout-grid"></div>
@@ -183,6 +59,9 @@
             </div>
           </div>
         </div>
+        <button class="tool-btn" id="watchlist-toggle" title="Скрыть/показать список">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="10" y1="1" x2="10" y2="15"/></svg>
+        </button>
       </div>
     </header>
 
@@ -238,70 +117,6 @@
           <button class="wl-tab">Объём</button>
         </div>
         <div class="watchlist-items">
-          <div class="watchlist-item" data-symbol="BTCUSDT">
-            <div class="wl-icon btc">₿</div>
-            <div class="wl-info">
-              <span class="wl-symbol">BTCUSDT</span>
-              <span class="wl-price" id="wl-btc-price">64 543</span>
-            </div>
-            <span class="wl-change positive">+0.16%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="ETHUSDT">
-            <div class="wl-icon eth">Ξ</div>
-            <div class="wl-info">
-              <span class="wl-symbol">ETHUSDT</span>
-              <span class="wl-price">3 421</span>
-            </div>
-            <span class="wl-change negative">-0.40%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="SOLUSDT">
-            <div class="wl-icon sol">◎</div>
-            <div class="wl-info">
-              <span class="wl-symbol">SOLUSDT</span>
-              <span class="wl-price">148.5</span>
-            </div>
-            <span class="wl-change positive">+2.31%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="BNBUSDT">
-            <div class="wl-icon bnb">B</div>
-            <div class="wl-info">
-              <span class="wl-symbol">BNBUSDT</span>
-              <span class="wl-price">598.2</span>
-            </div>
-            <span class="wl-change positive">+0.65%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="XRPUSDT">
-            <div class="wl-icon xrp">X</div>
-            <div class="wl-info">
-              <span class="wl-symbol">XRPUSDT</span>
-              <span class="wl-price">0.5234</span>
-            </div>
-            <span class="wl-change negative">-1.12%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="DOGEUSDT">
-            <div class="wl-icon doge">Ð</div>
-            <div class="wl-info">
-              <span class="wl-symbol">DOGEUSDT</span>
-              <span class="wl-price">0.1245</span>
-            </div>
-            <span class="wl-change positive">+3.45%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="ADAUSDT">
-            <div class="wl-icon ada">₳</div>
-            <div class="wl-info">
-              <span class="wl-symbol">ADAUSDT</span>
-              <span class="wl-price">0.4521</span>
-            </div>
-            <span class="wl-change negative">-0.88%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="AVAXUSDT">
-            <div class="wl-icon avax">A</div>
-            <div class="wl-info">
-              <span class="wl-symbol">AVAXUSDT</span>
-              <span class="wl-price">35.67</span>
-            </div>
-            <span class="wl-change positive">+1.92%</span>
-          </div>
           <div class="wl-section-header">MOEX</div>
           <div class="watchlist-item" data-symbol="SBER" data-source="moex">
             <div class="wl-icon moex">С</div>

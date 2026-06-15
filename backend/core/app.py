@@ -105,7 +105,7 @@ def on_subscribe(data):
     try:
         symbol = data["symbol"]
         timeframe = data["timeframe"]
-        source_name = data.get("source", "mock")
+        source_name = data.get("source", "moex")
         room = f"{symbol}_{timeframe}"
 
         join_room(room)

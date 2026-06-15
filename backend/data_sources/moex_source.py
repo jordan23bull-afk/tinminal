@@ -1,7 +1,5 @@
 import time
-import random
 import threading
-import json
 import requests
 import sys
 import os
@@ -29,6 +27,9 @@ MOEX_TICKERS = {
 
 
 class MoexSource(IDataSource):
+    def __init__(self):
+        self._stop_events = {}
+
     @property
     def name(self):
         return "moex"
@@ -43,6 +44,20 @@ class MoexSource(IDataSource):
             return MOEX_TICKERS[symbol]
         return symbol
 
+    def _fetch_candles(self, ticker, interval, from_date, to_date, start=0):
+        url = (
+            f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/"
+            f"securities/{ticker}/candles.json"
+            f"?from={from_date}&till={to_date}"
+            f"&interval={interval}&start={start}&iss.meta=off&iss.json=extended"
+        )
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, list) or len(data) < 2:
+            return []
+        return data[1].get("candles", [])
+
     def get_historical_data(self, symbol, timeframe, limit=500):
         ticker = self._resolve_ticker(symbol)
         interval = TF_MAP.get(timeframe, "60")
@@ -52,21 +67,24 @@ class MoexSource(IDataSource):
         from_date = (now - timedelta(seconds=limit * tf_sec)).strftime("%Y-%m-%d")
         to_date = now.strftime("%Y-%m-%d")
 
-        url = (
-            f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/"
-            f"securities/{ticker}/candles.json"
-            f"?from={from_date}&till={to_date}"
-            f"&interval={interval}&iss.meta=off&iss.json=extended"
-        )
-
         try:
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
+            all_candles = []
+            start = 0
+            while True:
+                batch = self._fetch_candles(ticker, interval, from_date, to_date, start)
+                if not batch:
+                    break
+                all_candles.extend(batch)
+                if len(batch) < 500:
+                    break
+                start += 500
 
-            candles = []
-            for row in data[1]["candles"]:
-                candles.append({
+            if not all_candles:
+                return []
+
+            result = []
+            for row in all_candles:
+                result.append({
                     "time": int(datetime.fromisoformat(row["begin"].replace("Z", "+00:00")).timestamp()),
                     "open": float(row["open"]),
                     "high": float(row["high"]),
@@ -75,7 +93,7 @@ class MoexSource(IDataSource):
                     "volume": int(row["volume"]),
                 })
 
-            return candles[-limit:] if len(candles) > limit else candles
+            return result[-limit:] if len(result) > limit else result
 
         except Exception as e:
             print(f"[MOEX] Error fetching candles for {ticker}: {e}")
@@ -85,9 +103,17 @@ class MoexSource(IDataSource):
         ticker = self._resolve_ticker(symbol)
         interval = TF_MAP.get(timeframe, "60")
         interval_sec = TF_SECONDS.get(timeframe, 3600)
+        key = (symbol, timeframe)
+
+        if key in self._stop_events:
+            return True
+
+        stop_event = threading.Event()
+        self._stop_events[key] = stop_event
+        last_broadcast = {"time": 0, "close": 0, "volume": 0}
 
         def stream():
-            while True:
+            while not stop_event.is_set():
                 try:
                     now = datetime.now(timezone.utc)
                     from_time = now - timedelta(seconds=interval_sec * 2)
@@ -101,27 +127,41 @@ class MoexSource(IDataSource):
                     )
 
                     resp = requests.get(url, timeout=10)
+                    resp.raise_for_status()
                     data = resp.json()
 
-                    if data[1]["candles"]:
-                        row = data[1]["candles"][-1]
-                        callback({
-                            "time": int(datetime.fromisoformat(row["begin"].replace("Z", "+00:00")).timestamp()),
-                            "open": float(row["open"]),
-                            "high": float(row["high"]),
-                            "low": float(row["low"]),
-                            "close": float(row["close"]),
-                            "volume": int(row["volume"]),
-                        })
+                    if isinstance(data, list) and len(data) >= 2:
+                        candles = data[1].get("candles", [])
+                        if candles:
+                            row = candles[-1]
+                            candle_time = int(datetime.fromisoformat(row["begin"].replace("Z", "+00:00")).timestamp())
+                            close = float(row["close"])
+                            volume = int(row["volume"])
+                            if candle_time != last_broadcast["time"] or close != last_broadcast["close"] or volume != last_broadcast["volume"]:
+                                last_broadcast["time"] = candle_time
+                                last_broadcast["close"] = close
+                                last_broadcast["volume"] = volume
+                                callback({
+                                    "time": candle_time,
+                                    "open": float(row["open"]),
+                                    "high": float(row["high"]),
+                                    "low": float(row["low"]),
+                                    "close": close,
+                                    "volume": volume,
+                                })
                 except Exception as e:
                     print(f"[MOEX] Poll error: {e}")
 
-                time.sleep(5)
+                stop_event.wait(5)
 
         threading.Thread(target=stream, daemon=True).start()
         return True
 
     def unsubscribe_realtime(self, symbol, timeframe):
+        key = (symbol, timeframe)
+        event = self._stop_events.pop(key, None)
+        if event:
+            event.set()
         return True
 
 

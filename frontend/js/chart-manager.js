@@ -1,11 +1,6 @@
 import { log } from "./utils.js";
 
 const SYMBOLS = [
-  { ticker: "BTCUSDT", name: "Bitcoin", source: "mock", icon: "₿" },
-  { ticker: "ETHUSDT", name: "Ethereum", source: "mock", icon: "Ξ" },
-  { ticker: "SOLUSDT", name: "Solana", source: "mock", icon: "◎" },
-  { ticker: "BNBUSDT", name: "BNB", source: "mock", icon: "B" },
-  { ticker: "XRPUSDT", name: "XRP", source: "mock", icon: "X" },
   { ticker: "SBER", name: "Сбербанк", source: "moex", icon: "С" },
   { ticker: "GAZP", name: "Газпром", source: "moex", icon: "Г" },
   { ticker: "LKOH", name: "Лукойл", source: "moex", icon: "Л" },
@@ -22,12 +17,8 @@ const TIMEFRAMES = [
   { tf: "5m", label: "5m" },
   { tf: "15m", label: "15m" },
   { tf: "1h", label: "1ч" },
-  { tf: "2h", label: "2ч" },
-  { tf: "3h", label: "3ч" },
   { tf: "4h", label: "4ч" },
   { tf: "1d", label: "Д" },
-  { tf: "1w", label: "Н" },
-  { tf: "1M", label: "М" },
 ];
 
 const INDICATORS = [
@@ -49,13 +40,11 @@ export class ChartManager {
       sma: "#e91e63"
     };
     this.showVolume = true;
+    this._activeTool = "crosshair";
+    this.activeChartId = null;
+    this._magnetOn = false;
     this.alerts = this._loadAlerts();
-    this._alertLines = new Map();
     this._initContextMenu();
-    this._requestNotificationPermission();
-  }
-
-  _requestNotificationPermission() {
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
@@ -73,269 +62,124 @@ export class ChartManager {
 
   _initContextMenu() {
     this._ctxMenu = document.createElement("div");
-    this._ctxMenu.className = "chart-context-menu hidden";
+    this._ctxMenu.className = "hline-ctx hidden";
     document.body.appendChild(this._ctxMenu);
-
-    document.addEventListener("click", () => {
-      this._ctxMenu.classList.add("hidden");
-    });
+    document.addEventListener("click", () => this._ctxMenu.classList.add("hidden"));
   }
 
-  _showContextMenu(e, chartId) {
-    const chartAlerts = this.alerts.filter(a => a.chartId === chartId && !a.triggered);
-    const currentSound = localStorage.getItem("alert-sound") || "chime";
-
-    let html = `
-      <div class="ctx-item" data-action="add-alert">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-        Добавить уведомление
-      </div>
-      <div class="ctx-sound-row">
-        <span>Звук:</span>
-        <select class="ctx-sound-select" data-action="select-sound">
-          <option value="chime" ${currentSound === "chime" ? "selected" : ""}>Звон</option>
-          <option value="beep" ${currentSound === "beep" ? "selected" : ""}>Бип</option>
-          <option value="alert" ${currentSound === "alert" ? "selected" : ""}>Тревога</option>
-          <option value="ding" ${currentSound === "ding" ? "selected" : ""}>Динг</option>
-          <option value="none" ${currentSound === "none" ? "selected" : ""}>Без звука</option>
-        </select>
-      </div>
-    `;
-
-    if (chartAlerts.length > 0) {
-      html += `<div class="ctx-separator"></div>`;
-      html += `<div class="ctx-label">Активные:</div>`;
-      chartAlerts.forEach(a => {
-        html += `
-          <div class="ctx-alert-item" data-action="remove-alert" data-alert-id="${a.id}">
-            <span class="ctx-alert-price">${a.symbol} — ${a.price}</span>
-            <span class="ctx-alert-x">&times;</span>
-          </div>
-        `;
-      });
-      html += `<div class="ctx-separator"></div>`;
-      html += `
-        <div class="ctx-item ctx-danger" data-action="clear-alerts">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-          Удалить все уведомления
-        </div>
-      `;
+  _showContextMenu(e, chartId, price) {
+    const existing = this.alerts.find(a => a.chartId === chartId && Math.abs(a.price - price) < 0.5);
+    let html = "";
+    if (!existing) {
+      html += `<div class="hline-ctx-item" data-action="add-alert">Добавить алерт</div>`;
+    } else {
+      html += `<div class="hline-ctx-item" data-action="remove-alert">Удалить алерт</div>`;
     }
-
+    html += `<div class="hline-ctx-item hline-ctx-danger" data-action="remove-line">Удалить линию</div>`;
     this._ctxMenu.innerHTML = html;
-    this._ctxData = { chartId };
+    this._ctxData = { chartId, price };
     this._ctxMenu.style.left = e.clientX + "px";
     this._ctxMenu.style.top = e.clientY + "px";
     this._ctxMenu.classList.remove("hidden");
-
-    this._ctxMenu.querySelectorAll("[data-action]").forEach(item => {
+    this._ctxMenu.querySelectorAll(".hline-ctx-item").forEach(item => {
       item.addEventListener("click", () => {
         const action = item.dataset.action;
         if (action === "add-alert") {
-          this.addAlert(chartId, this._ctxData.price);
+          this.addAlert(chartId, price);
         } else if (action === "remove-alert") {
-          this.removeAlert(parseInt(item.dataset.alertId), chartId);
-        } else if (action === "clear-alerts") {
-          this.clearAlerts(chartId);
+          this.removeAlert(chartId, price);
+        } else if (action === "remove-line") {
+          this._removeLineByPrice(chartId, price);
         }
         this._ctxMenu.classList.add("hidden");
       });
     });
-
-    const soundSelect = this._ctxMenu.querySelector("[data-action='select-sound']");
-    if (soundSelect) {
-      soundSelect.addEventListener("change", () => {
-        localStorage.setItem("alert-sound", soundSelect.value);
-      });
-      soundSelect.addEventListener("click", (e) => e.stopPropagation());
-    }
   }
 
   addAlert(chartId, price) {
     const chartObj = this.charts.get(chartId);
-    if (!chartObj) return;
-    const symbol = chartObj.config.symbol || "???";
-
-    this.alerts.push({
-      id: Date.now(),
-      chartId,
-      symbol,
-      price,
-      triggered: false
-    });
+    const symbol = chartObj ? chartObj.config.symbol : "???";
+    this.alerts.push({ chartId, symbol, price, id: Date.now() });
     this._saveAlerts();
-    this._renderAlertBadges(chartId);
+    this._updateLineColor(chartId, price, "#FF9800");
     log(`Alert added: ${symbol} @ ${price}`);
   }
 
-  removeAlert(alertId, chartId) {
-    this.alerts = this.alerts.filter(a => a.id !== alertId);
+  removeAlert(chartId, price) {
+    this.alerts = this.alerts.filter(a => !(a.chartId === chartId && Math.abs(a.price - price) < 0.5));
     this._saveAlerts();
-    this._renderAlertBadges(chartId);
+    this._updateLineColor(chartId, price, "#2196F3");
   }
 
-  clearAlerts(chartId) {
-    this.alerts = this.alerts.filter(a => a.chartId !== chartId);
-    this._saveAlerts();
-    this._renderAlertBadges(chartId);
+  _updateLineColor(chartId, price, color) {
+    const chartObj = this.charts.get(chartId);
+    if (!chartObj || !chartObj.mainSeries) return;
+    const line = chartObj._horizontalLines.find(l => {
+      const p = l.options().price;
+      return p != null && Math.abs(p - price) < 0.5;
+    });
+    if (!line) return;
+    chartObj.mainSeries.removePriceLine(line);
+    const newLine = chartObj.mainSeries.createPriceLine({
+      price,
+      color,
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: ""
+    });
+    chartObj._horizontalLines = chartObj._horizontalLines.map(l => l === line ? newLine : l);
   }
 
-  _renderAlertBadges(chartId) {
+  _removeLineByPrice(chartId, price) {
     const chartObj = this.charts.get(chartId);
     if (!chartObj) return;
-
-    if (!chartObj._alertBadgeContainer) {
-      const container = document.createElement("div");
-      container.className = "alert-badge-container";
-      chartObj.container.appendChild(container);
-      chartObj._alertBadgeContainer = container;
-    }
-
-    const container = chartObj._alertBadgeContainer;
-    container.innerHTML = "";
-
-    const chartAlerts = this.alerts.filter(a => a.chartId === chartId && !a.triggered);
-    for (const alert of chartAlerts) {
-      const badge = document.createElement("div");
-      badge.className = "alert-badge";
-      badge.dataset.alertId = alert.id;
-
-      const bell = document.createElement("span");
-      bell.className = "alert-bell";
-      bell.textContent = "🔔";
-
-      const close = document.createElement("span");
-      close.className = "alert-close";
-      close.textContent = "×";
-      close.addEventListener("click", (e) => {
-        e.stopPropagation();
-        this.removeAlert(alert.id, chartId);
-      });
-
-      badge.appendChild(bell);
-      badge.appendChild(close);
-      container.appendChild(badge);
-    }
-
-    this._positionAlertBadges(chartId);
-  }
-
-  _positionAlertBadges(chartId) {
-    const chartObj = this.charts.get(chartId);
-    if (!chartObj || !chartObj._alertBadgeContainer) return;
-
-    const chart = chartObj.chart;
-    const wrapper = chartObj.container;
-    const wrapperRect = wrapper.getBoundingClientRect();
-
-    const chartAlerts = this.alerts.filter(a => a.chartId === chartId && !a.triggered);
-    const badges = chartObj._alertBadgeContainer.querySelectorAll(".alert-badge");
-
-    badges.forEach((badge, i) => {
-      const alert = chartAlerts[i];
-      if (!alert) return;
-
-      const y = chart.priceScale("right").priceToCoordinate(alert.price);
-      if (y == null) {
-        badge.style.display = "none";
-        return;
-      }
-
-      const headerH = chartObj.container.querySelector(".chart-header")?.offsetHeight || 0;
-      badge.style.display = "";
-      badge.style.top = (headerH + y - 10) + "px";
-      badge.style.right = "2px";
+    const line = chartObj._horizontalLines.find(l => {
+      const p = l.options().price;
+      return p != null && Math.abs(p - price) < 0.5;
     });
-  }
-
-  _initAlertBadgeUpdates() {
-    const update = () => {
-      for (const [id] of this.charts) {
-        this._positionAlertBadges(id);
-      }
-    };
-    for (const [, chartObj] of this.charts) {
-      chartObj.chart.timeScale().subscribeVisibleLogicalRangeChange(update);
+    if (line) {
+      chartObj.mainSeries.removePriceLine(line);
+      chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== line);
     }
+    this.removeAlert(chartId, price);
   }
 
   checkAlerts(candle) {
+    let changed = false;
     for (const alert of this.alerts) {
       if (alert.triggered) continue;
       const chartObj = this.charts.get(alert.chartId);
-      if (!chartObj) continue;
-      if (chartObj.config.symbol !== alert.symbol) continue;
-
-      const hit = candle.high >= alert.price && candle.low <= alert.price;
-
-      if (hit) {
+      if (!chartObj || chartObj.config.symbol !== alert.symbol) continue;
+      if (candle.high >= alert.price && candle.low <= alert.price) {
         alert.triggered = true;
+        changed = true;
         this._sendNotification(alert, candle);
-        this.removeAlert(alert.id, alert.chartId);
       }
+    }
+    if (changed) {
+      this.alerts = this.alerts.filter(a => !a.triggered);
+      this._saveAlerts();
     }
   }
 
   _sendNotification(alert, candle) {
-    const title = `${alert.symbol} — цена достигла ${alert.price}`;
-    const body = `Текущая цена: ${candle.close}`;
-
+    const title = `${alert.symbol} — ${alert.price}`;
+    const body = `Цена: ${candle.close}`;
     if ("Notification" in window && Notification.permission === "granted") {
-      const n = new Notification(title, {
-        body,
-        icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔔</text></svg>",
-        requireInteraction: false
-      });
+      const n = new Notification(title, { body, requireInteraction: false });
       n.onclick = () => { window.focus(); n.close(); };
     }
-
-    const sound = localStorage.getItem("alert-sound") || "chime";
-    if (sound !== "none") {
-      this._playSound(sound);
-    }
-
-    log(`Alert triggered: ${title}`);
+    this._playSound();
+    log(`Alert: ${title}`);
   }
 
-  _playSound(type) {
+  _playSound() {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-
-      const sounds = {
-        chime: [
-          { freq: 523, start: 0, dur: 0.15 },
-          { freq: 659, start: 0.12, dur: 0.15 },
-          { freq: 784, start: 0.24, dur: 0.2 },
-        ],
-        beep: [
-          { freq: 800, start: 0, dur: 0.15 },
-          { freq: 800, start: 0.2, dur: 0.15 },
-        ],
-        alert: [
-          { freq: 880, start: 0, dur: 0.1 },
-          { freq: 660, start: 0.12, dur: 0.1 },
-          { freq: 880, start: 0.24, dur: 0.1 },
-          { freq: 660, start: 0.36, dur: 0.1 },
-        ],
-        ding: [
-          { freq: 1200, start: 0, dur: 0.3 },
-        ],
-      };
-
-      const notes = sounds[type] || sounds.chime;
-      notes.forEach(note => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = note.freq;
-        osc.type = "sine";
-        gain.gain.setValueAtTime(0.3, ctx.currentTime + note.start);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + note.start + note.dur);
-        osc.start(ctx.currentTime + note.start);
-        osc.stop(ctx.currentTime + note.start + note.dur);
-      });
-    } catch (e) { /* audio not available */ }
+      const audio = new Audio("sounds/alert.wav");
+      audio.volume = 0.5;
+      audio.play().catch(() => {});
+    } catch {}
   }
 
   _buildHeader(id) {
@@ -407,7 +251,7 @@ export class ChartManager {
     tfContainer.className = "ch-tf-buttons";
     TIMEFRAMES.forEach(t => {
       const btn = document.createElement("button");
-      btn.className = "ch-tf-btn" + (t.tf === (cfg.timeframe || "4h") ? " active" : "");
+      btn.className = "ch-tf-btn" + (t.tf === (cfg.timeframe || "1h") ? " active" : "");
       btn.textContent = t.label;
       btn.dataset.tf = t.tf;
       btn.addEventListener("click", () => {
@@ -548,6 +392,13 @@ export class ChartManager {
     this.onChartChange(id, cfg.symbol, cfg.timeframe, cfg.source, cfg.chartType);
   }
 
+  setActiveChart(id) {
+    this.activeChartId = id;
+    for (const [cid, obj] of this.charts) {
+      obj.container.classList.toggle("active", cid === id);
+    }
+  }
+
   createChart(id, config = {}) {
     if (this.charts.has(id)) {
       log(`Chart ${id} already exists`);
@@ -566,6 +417,10 @@ export class ChartManager {
     wrapper.appendChild(body);
     this.container.appendChild(wrapper);
 
+    wrapper.addEventListener("click", () => {
+      this.setActiveChart(id);
+    });
+
     const chartObj = {
       chart: null,
       mainSeries: null,
@@ -575,7 +430,9 @@ export class ChartManager {
       indicators: {},
       container: wrapper,
       body: body,
-      _resizeTimer: null
+      _resizeTimer: null,
+      _horizontalLines: [],
+      crosshairPrice: null
     };
     this.charts.set(id, chartObj);
 
@@ -604,27 +461,76 @@ export class ChartManager {
       }
     });
 
-    let crosshairPrice = null;
-
-    const showCtx = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const price = crosshairPrice;
-      if (price == null || isNaN(price)) return;
-
-      this._ctxData = { chartId: id, price: Math.round(price * 100) / 100 };
-      this._showContextMenu(e, id);
-    };
-
-    body.addEventListener("contextmenu", showCtx, true);
-    wrapper.addEventListener("contextmenu", showCtx, true);
-
     const mainSeries = this._createSeries(chart, chartType);
 
     chart.subscribeCrosshairMove((param) => {
       if (param && param.time) {
+        chartObj.crosshairTime = param.time;
         const data = param.seriesData.get(mainSeries);
-        if (data) crosshairPrice = data.close || data.value || null;
+        if (data) chartObj.crosshairPrice = data.close || data.value || null;
+      }
+    });
+
+    body.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (this._activeTool !== "horizontal") return;
+      const rect = body.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      let price = mainSeries.coordinateToPrice(y);
+      if (price == null || isNaN(price)) return;
+      if (this._magnetOn && chartObj.crosshairTime != null) {
+        const candles = chartObj.config._lastCandles;
+        if (candles) {
+          const candle = candles.find(c => c.time === chartObj.crosshairTime);
+          if (candle) {
+            const distHigh = Math.abs(price - candle.high);
+            const distLow = Math.abs(price - candle.low);
+            price = distHigh <= distLow ? candle.high : candle.low;
+          }
+        }
+      }
+      this.addHorizontalLine(id, price);
+      this._activeTool = "crosshair";
+      document.querySelectorAll(".tool-btn[data-tool]").forEach(b => b.classList.remove("active"));
+      document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
+    }, true);
+
+    body.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      if (this._activeTool !== "eraser") return;
+      if (chartObj._horizontalLines.length === 0) return;
+      const rect = body.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      let closest = null;
+      let minDist = Infinity;
+      for (const line of chartObj._horizontalLines) {
+        const lineY = mainSeries.priceToCoordinate(line.options().price);
+        if (lineY == null) continue;
+        const dist = Math.abs(y - lineY);
+        if (dist < minDist) { minDist = dist; closest = line; }
+      }
+      if (closest && minDist < 20) {
+        const removedPrice = closest.options().price;
+        mainSeries.removePriceLine(closest);
+        chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== closest);
+        this.removeAlert(id, removedPrice);
+      }
+    }, true);
+
+    body.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const rect = body.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+      let closest = null;
+      let minDist = Infinity;
+      for (const line of chartObj._horizontalLines) {
+        const lineY = mainSeries.priceToCoordinate(line.options().price);
+        if (lineY == null) continue;
+        const dist = Math.abs(y - lineY);
+        if (dist < minDist) { minDist = dist; closest = line; }
+      }
+      if (closest && minDist < 20) {
+        this._showContextMenu(e, id, closest.options().price);
       }
     });
 
@@ -650,7 +556,6 @@ export class ChartManager {
           if (chartObj._resizeTimer) clearTimeout(chartObj._resizeTimer);
           chartObj._resizeTimer = setTimeout(() => {
             chart.applyOptions({ width, height });
-            this._positionAlertBadges(id);
           }, 10);
         }
       }
@@ -664,6 +569,7 @@ export class ChartManager {
         chart.applyOptions({ width: r.width, height: r.height });
       }
       chart.timeScale().fitContent();
+      chart.timeScale().scrollToPosition(1, false);
       setTimeout(() => {
         const r2 = body.getBoundingClientRect();
         if (r2.width > 0 && r2.height > 0) {
@@ -673,10 +579,7 @@ export class ChartManager {
     });
 
     log(`Chart created: ${id} (${chartType}) ${w}x${h}`);
-    setTimeout(() => {
-      this._renderAlertBadges(id);
-      this._initAlertBadgeUpdates();
-    }, 300);
+    if (!this.activeChartId) this.setActiveChart(id);
     return chartObj;
   }
 
@@ -762,6 +665,7 @@ export class ChartManager {
           chartObj.mainSeries.setData(formattedData);
           chartObj.volumeSeries.setData(volumeData);
           chartObj.chart.timeScale().fitContent();
+          chartObj.chart.timeScale().scrollToPosition(1, false);
           return;
         }
         const start = Math.max(0, idx - batchSize);
@@ -789,6 +693,7 @@ export class ChartManager {
     }
 
     chartObj.chart.timeScale().fitContent();
+    chartObj.chart.timeScale().scrollToPosition(1, false);
   }
 
   updateCandle(id, candle) {
@@ -824,6 +729,7 @@ export class ChartManager {
       const formattedData = this._formatDataForType(chartObj.config._lastCandles, newType);
       newSeries.setData(formattedData);
       chartObj.chart.timeScale().fitContent();
+      chartObj.chart.timeScale().scrollToPosition(1, false);
     }
 
     log(`Chart ${id} type changed to ${newType}`);
@@ -834,6 +740,7 @@ export class ChartManager {
     if (!chartObj) return;
     if (chartObj._resizeObserver) chartObj._resizeObserver.disconnect();
     if (chartObj._resizeTimer) clearTimeout(chartObj._resizeTimer);
+    this.removeAllHorizontalLines(id);
     chartObj.chart.remove();
     if (chartObj.container.parentNode) {
       chartObj.container.parentNode.removeChild(chartObj.container);
@@ -842,7 +749,37 @@ export class ChartManager {
     log(`Chart removed: ${id}`);
   }
 
+  addHorizontalLine(chartId, price) {
+    const chartObj = this.charts.get(chartId);
+    if (!chartObj || !chartObj.mainSeries) return;
+    const line = chartObj.mainSeries.createPriceLine({
+      price,
+      color: "#2196F3",
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: ""
+    });
+    chartObj._horizontalLines.push(line);
+    log(`Horizontal line added at ${price}`);
+  }
+
+  removeAllHorizontalLines(chartId) {
+    const chartObj = this.charts.get(chartId);
+    if (!chartObj) return;
+    for (const line of chartObj._horizontalLines) {
+      chartObj.mainSeries.removePriceLine(line);
+    }
+    chartObj._horizontalLines = [];
+  }
+
   getAllChartIds() {
     return Array.from(this.charts.keys());
+  }
+
+  restoreAlertColors() {
+    for (const alert of this.alerts) {
+      this._updateLineColor(alert.chartId, alert.price, "#FF9800");
+    }
   }
 }

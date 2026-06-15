@@ -24,7 +24,7 @@ class Candle:
 
 @dataclass
 class HistoryRequest:
-    source: str = "mock"
+    source: str = "moex"
     symbol: str = "BTCUSDT"
     timeframe: str = "1h"
     limit: int = 500

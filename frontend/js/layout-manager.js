@@ -11,6 +11,9 @@ const LAYOUTS = {
     { rows: 2, cols: 2, cells: [[1, 1], [1, 1], [1, 2]] },
     { rows: 2, cols: 2, cells: [[1, 2], [1, 1], [1, 1]] },
   ],
+  4: [
+    { rows: 2, cols: 2, cells: [[1, 1], [1, 1], [1, 1], [1, 1]] },
+  ],
   6: [
     { rows: 2, cols: 3, cells: [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]] },
   ],
@@ -120,6 +123,8 @@ export class LayoutManager {
       this.setLayoutByCount(2, 0);
     } else if (chartCount <= 3) {
       this.setLayoutByCount(3, 0);
+    } else if (chartCount <= 4) {
+      this.setLayoutByCount(4, 0);
     } else if (chartCount <= 6) {
       this.setLayoutByCount(6, 0);
     } else if (chartCount <= 9) {
