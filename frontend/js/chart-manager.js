@@ -7,9 +7,12 @@ const SYMBOLS = [
   { ticker: "YDEX", name: "Яндекс", source: "moex", icon: "Я" },
   { ticker: "GMKN", name: "Норникель", source: "moex", icon: "Н" },
   { ticker: "ROSN", name: "Роснефть", source: "moex", icon: "Р" },
+  { ticker: "SNGS", name: "Сургутнефтегаз", source: "moex", icon: "С" },
   { ticker: "VTBR", name: "ВТБ", source: "moex", icon: "В" },
   { ticker: "TCSG", name: "Т-Банк", source: "moex", icon: "Т" },
   { ticker: "PHOR", name: "Фосагро", source: "moex", icon: "Ф" },
+  { ticker: "SBERP", name: "Сбербанк-П", source: "moex", icon: "С" },
+  { ticker: "GMKNP", name: "Норникель-П", source: "moex", icon: "Н" },
 ];
 
 const TIMEFRAMES = [
@@ -466,7 +469,7 @@ export class ChartManager {
     chart.subscribeCrosshairMove((param) => {
       if (param && param.time) {
         chartObj.crosshairTime = param.time;
-        const data = param.seriesData.get(mainSeries);
+        const data = param.seriesData.get(chartObj.mainSeries);
         if (data) chartObj.crosshairPrice = data.close || data.value || null;
       }
     });
@@ -476,7 +479,7 @@ export class ChartManager {
       if (this._activeTool !== "horizontal") return;
       const rect = body.getBoundingClientRect();
       const y = e.clientY - rect.top;
-      let price = mainSeries.coordinateToPrice(y);
+      let price = chartObj.mainSeries.coordinateToPrice(y);
       if (price == null || isNaN(price)) return;
       if (this._magnetOn && chartObj.crosshairTime != null) {
         const candles = chartObj.config._lastCandles;
@@ -504,14 +507,14 @@ export class ChartManager {
       let closest = null;
       let minDist = Infinity;
       for (const line of chartObj._horizontalLines) {
-        const lineY = mainSeries.priceToCoordinate(line.options().price);
+        const lineY = chartObj.mainSeries.priceToCoordinate(line.options().price);
         if (lineY == null) continue;
         const dist = Math.abs(y - lineY);
         if (dist < minDist) { minDist = dist; closest = line; }
       }
       if (closest && minDist < 20) {
         const removedPrice = closest.options().price;
-        mainSeries.removePriceLine(closest);
+        chartObj.mainSeries.removePriceLine(closest);
         chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== closest);
         this.removeAlert(id, removedPrice);
       }
@@ -524,7 +527,7 @@ export class ChartManager {
       let closest = null;
       let minDist = Infinity;
       for (const line of chartObj._horizontalLines) {
-        const lineY = mainSeries.priceToCoordinate(line.options().price);
+        const lineY = chartObj.mainSeries.priceToCoordinate(line.options().price);
         if (lineY == null) continue;
         const dist = Math.abs(y - lineY);
         if (dist < minDist) { minDist = dist; closest = line; }
@@ -719,6 +722,9 @@ export class ChartManager {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
 
+    const savedLines = chartObj._horizontalLines.map(l => l.options().price);
+    chartObj._horizontalLines = [];
+
     chartObj.chart.removeSeries(chartObj.mainSeries);
 
     const newSeries = this._createSeries(chartObj.chart, newType);
@@ -731,6 +737,8 @@ export class ChartManager {
       chartObj.chart.timeScale().fitContent();
       chartObj.chart.timeScale().scrollToPosition(1, false);
     }
+
+    savedLines.forEach(price => this.addHorizontalLine(id, price));
 
     log(`Chart ${id} type changed to ${newType}`);
   }
