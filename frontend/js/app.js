@@ -183,10 +183,16 @@ updateClock();
 // Tools
 document.querySelectorAll(".tool-btn[data-tool]").forEach(btn => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tool-btn[data-tool]").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
     chartManager._activeTool = btn.dataset.tool;
   });
+});
+
+// Magnet toggle
+document.getElementById("magnet-btn").addEventListener("click", function() {
+  chartManager._magnetOn = !chartManager._magnetOn;
+  this.classList.toggle("active", chartManager._magnetOn);
 });
 
 // Watchlist toggle
@@ -500,6 +506,7 @@ function restoreState(state) {
             chartCfg.horizontalLines.forEach(price => {
               chartManager.addHorizontalLine(id, price);
             });
+            chartManager.restoreAlertColors();
           }, 300);
         }
       });

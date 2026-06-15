@@ -50,6 +50,7 @@ export class ChartManager {
     };
     this.showVolume = true;
     this._activeTool = "crosshair";
+    this._magnetOn = false;
     this.alerts = this._loadAlerts();
     this._initContextMenu();
     if ("Notification" in window && Notification.permission === "default") {
@@ -75,7 +76,7 @@ export class ChartManager {
   }
 
   _showContextMenu(e, chartId, price) {
-    const existing = this.alerts.find(a => a.chartId === chartId && a.price === price);
+    const existing = this.alerts.find(a => a.chartId === chartId && Math.abs(a.price - price) < 0.5);
     let html = "";
     if (!existing) {
       html += `<div class="hline-ctx-item" data-action="add-alert">Добавить алерт</div>`;
@@ -108,18 +109,43 @@ export class ChartManager {
     const symbol = chartObj ? chartObj.config.symbol : "???";
     this.alerts.push({ chartId, symbol, price, id: Date.now() });
     this._saveAlerts();
+    this._updateLineColor(chartId, price, "#FF9800");
     log(`Alert added: ${symbol} @ ${price}`);
   }
 
   removeAlert(chartId, price) {
-    this.alerts = this.alerts.filter(a => !(a.chartId === chartId && a.price === price));
+    this.alerts = this.alerts.filter(a => !(a.chartId === chartId && Math.abs(a.price - price) < 0.5));
     this._saveAlerts();
+    this._updateLineColor(chartId, price, "#2196F3");
+  }
+
+  _updateLineColor(chartId, price, color) {
+    const chartObj = this.charts.get(chartId);
+    if (!chartObj || !chartObj.mainSeries) return;
+    const line = chartObj._horizontalLines.find(l => {
+      const p = l.options().price;
+      return p != null && Math.abs(p - price) < 0.5;
+    });
+    if (!line) return;
+    chartObj.mainSeries.removePriceLine(line);
+    const newLine = chartObj.mainSeries.createPriceLine({
+      price,
+      color,
+      lineWidth: 1,
+      lineStyle: 2,
+      axisLabelVisible: true,
+      title: ""
+    });
+    chartObj._horizontalLines = chartObj._horizontalLines.map(l => l === line ? newLine : l);
   }
 
   _removeLineByPrice(chartId, price) {
     const chartObj = this.charts.get(chartId);
     if (!chartObj) return;
-    const line = chartObj._horizontalLines.find(l => Math.abs(l.options().price - price) < 0.001);
+    const line = chartObj._horizontalLines.find(l => {
+      const p = l.options().price;
+      return p != null && Math.abs(p - price) < 0.5;
+    });
     if (line) {
       chartObj.mainSeries.removePriceLine(line);
       chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== line);
@@ -436,6 +462,7 @@ export class ChartManager {
 
     chart.subscribeCrosshairMove((param) => {
       if (param && param.time) {
+        chartObj.crosshairTime = param.time;
         const data = param.seriesData.get(mainSeries);
         if (data) chartObj.crosshairPrice = data.close || data.value || null;
       }
@@ -446,11 +473,22 @@ export class ChartManager {
       if (this._activeTool !== "horizontal") return;
       const rect = body.getBoundingClientRect();
       const y = e.clientY - rect.top;
-      const price = mainSeries.coordinateToPrice(y);
+      let price = mainSeries.coordinateToPrice(y);
       if (price == null || isNaN(price)) return;
+      if (this._magnetOn && chartObj.crosshairTime != null) {
+        const candles = chartObj.config._lastCandles;
+        if (candles) {
+          const candle = candles.find(c => c.time === chartObj.crosshairTime);
+          if (candle) {
+            const distHigh = Math.abs(price - candle.high);
+            const distLow = Math.abs(price - candle.low);
+            price = distHigh <= distLow ? candle.high : candle.low;
+          }
+        }
+      }
       this.addHorizontalLine(id, price);
       this._activeTool = "crosshair";
-      document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tool-btn[data-tool]").forEach(b => b.classList.remove("active"));
       document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
     }, true);
 
@@ -472,9 +510,6 @@ export class ChartManager {
         mainSeries.removePriceLine(closest);
         chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== closest);
       }
-      this._activeTool = "crosshair";
-      document.querySelectorAll(".tool-btn").forEach(b => b.classList.remove("active"));
-      document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
     }, true);
 
     body.addEventListener("contextmenu", (e) => {
@@ -730,5 +765,11 @@ export class ChartManager {
 
   getAllChartIds() {
     return Array.from(this.charts.keys());
+  }
+
+  restoreAlertColors() {
+    for (const alert of this.alerts) {
+      this._updateLineColor(alert.chartId, alert.price, "#FF9800");
+    }
   }
 }
