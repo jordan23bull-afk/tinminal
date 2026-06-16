@@ -91,6 +91,17 @@ const INDICATOR_TYPES = [
     { key: "k", label: "%K", default: 14 },
     { key: "d", label: "%D", default: 3 }
   ]},
+  { id: "poc", label: "POC", params: [
+    { key: "period", label: "Период (0=авто)", default: 0 },
+    { key: "bins", label: "Уровни", default: 30 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#FF5722" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 },
+    { key: "extendMode", label: "Режим", type: "select", options: [
+      { value: "day", label: "Внутри дня" },
+      { value: "cross", label: "До пересечения" }
+    ]}
+  ]},
 ];
 
 const INDICATORS = [];
@@ -106,14 +117,25 @@ function saveCustomIndicators(list) {
   localStorage.setItem("trading-dashboard-custom-indicators", JSON.stringify(list));
 }
 
+function getDeletedIndicators() {
+  try {
+    const raw = localStorage.getItem("trading-dashboard-deleted-indicators");
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
 function mergeIndicators() {
   const custom = loadCustomIndicators();
-  INDICATORS.length = 0;
-  INDICATORS.push(
+  const deleted = getDeletedIndicators();
+  const builtins = [
     { id: "rsi", label: "RSI" },
     { id: "macd", label: "MACD" },
     { id: "sma", label: "SMA" },
-  );
+  ];
+  INDICATORS.length = 0;
+  builtins.forEach(b => {
+    if (!deleted.includes(b.id)) INDICATORS.push(b);
+  });
   custom.forEach(c => {
     if (!INDICATORS.find(i => i.id === c.id)) {
       INDICATORS.push({ id: c.id, label: c.label, params: c.params });
@@ -133,7 +155,8 @@ export class ChartManager {
       macd: "#FF6D00",
       macd_signal: "#9C27B0",
       macd_hist: "#787B86",
-      sma: "#e91e63"
+      sma: "#e91e63",
+      poc: "#FF5722"
     };
     this.showVolume = true;
     this._activeTool = "crosshair";
@@ -250,6 +273,7 @@ export class ChartManager {
       if (candle.high >= alert.price && candle.low <= alert.price) {
         alert.triggered = true;
         changed = true;
+        this._updateLineColor(alert.chartId, alert.price, "#F44336");
         this._sendNotification(alert, candle);
       }
     }
@@ -420,6 +444,109 @@ export class ChartManager {
     }
   }
 
+  _getChartSettings(id) {
+    const chartObj = this.charts.get(id);
+    const symbol = chartObj ? (chartObj.config.symbol || "default") : "default";
+    try {
+      const raw = localStorage.getItem("chart-settings-" + symbol);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  }
+
+  _saveChartSettings(id, settings) {
+    const chartObj = this.charts.get(id);
+    const symbol = chartObj ? (chartObj.config.symbol || "default") : "default";
+    localStorage.setItem("chart-settings-" + symbol, JSON.stringify(settings));
+  }
+
+  _showChartSettings(id) {
+    const chartObj = this.charts.get(id);
+    if (!chartObj) return;
+    const settings = this._getChartSettings(id);
+
+    const defaults = {
+      upColor: "#26a69a",
+      downColor: "#ef5350",
+      bgColor: "#131722",
+      gridColor: "#242832",
+      wickUpColor: "#26a69a",
+      wickDownColor: "#ef5350",
+    };
+    const s = { ...defaults, ...settings };
+
+    const overlay = document.createElement("div");
+    overlay.className = "ind-modal-overlay";
+    const modal = document.createElement("div");
+    modal.className = "ind-modal";
+    modal.innerHTML = `
+      <h3>Настройки графика</h3>
+      <label>Цвет свечей вверх</label>
+      <div class="chart-settings-color"><input type="color" id="cs-up" value="${s.upColor}"><span>${s.upColor}</span></div>
+      <label>Цвет свечей вниз</label>
+      <div class="chart-settings-color"><input type="color" id="cs-down" value="${s.downColor}"><span>${s.downColor}</span></div>
+      <label>Фон графика</label>
+      <div class="chart-settings-color"><input type="color" id="cs-bg" value="${s.bgColor}"><span>${s.bgColor}</span></div>
+      <label>Цвет сетки</label>
+      <div class="chart-settings-color"><input type="color" id="cs-grid" value="${s.gridColor}"><span>${s.gridColor}</span></div>
+      <label>Фитиль вверх</label>
+      <div class="chart-settings-color"><input type="color" id="cs-wickup" value="${s.wickUpColor}"><span>${s.wickUpColor}</span></div>
+      <label>Фитиль вниз</label>
+      <div class="chart-settings-color"><input type="color" id="cs-wickdown" value="${s.wickDownColor}"><span>${s.wickDownColor}</span></div>
+      <div class="ind-modal-btns">
+        <button class="ind-cancel">Отмена</button>
+        <button class="ind-reset" id="cs-reset">Сбросить</button>
+        <button class="ind-save">Применить</button>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    modal.querySelectorAll("input[type=color]").forEach(inp => {
+      inp.addEventListener("input", () => {
+        inp.nextElementSibling.textContent = inp.value;
+      });
+    });
+
+    modal.querySelector(".ind-cancel").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    modal.querySelector("#cs-reset").addEventListener("click", () => {
+      const d = { up: defaults.upColor, down: defaults.downColor, bg: defaults.bgColor, grid: defaults.gridColor, wickup: defaults.wickUpColor, wickdown: defaults.wickDownColor };
+      Object.entries(d).forEach(([k, v]) => {
+        const inp = modal.querySelector(`#cs-${k}`);
+        if (inp) { inp.value = v; inp.nextElementSibling.textContent = v; }
+      });
+    });
+
+    modal.querySelector(".ind-save").addEventListener("click", () => {
+      const newSettings = {
+        upColor: modal.querySelector("#cs-up").value,
+        downColor: modal.querySelector("#cs-down").value,
+        bgColor: modal.querySelector("#cs-bg").value,
+        gridColor: modal.querySelector("#cs-grid").value,
+        wickUpColor: modal.querySelector("#cs-wickup").value,
+        wickDownColor: modal.querySelector("#cs-wickdown").value,
+      };
+      this._saveChartSettings(id, newSettings);
+      this._applyChartSettings(chartObj, newSettings);
+      overlay.remove();
+    });
+  }
+
+  _applyChartSettings(chartObj, s) {
+    const chart = chartObj.chart;
+    chart.applyOptions({
+      layout: { background: { type: "solid", color: s.bgColor } },
+      grid: { vertLines: { color: s.gridColor }, horzLines: { color: s.gridColor } }
+    });
+    if (chartObj.chartType === "candlestick" || chartObj.chartType === "bar") {
+      chartObj.mainSeries.applyOptions({
+        upColor: s.upColor, downColor: s.downColor,
+        wickUpColor: s.wickUpColor, wickDownColor: s.wickDownColor,
+      });
+    }
+  }
+
   _toggleIndicator(id, indId) {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
@@ -430,10 +557,12 @@ export class ChartManager {
       delete chartObj.indicators[indId];
       chartObj.config._activeIndicators = chartObj.config._activeIndicators.filter(i => i !== indId);
     } else {
-      const color = this.indicatorColors[indId] || "#787B86";
+      const custom = loadCustomIndicators().find(c => c.id === indId);
+      const color = (custom && custom.extra && custom.extra.color) || this.indicatorColors[indId] || "#787B86";
+      const lineWidth = (custom && custom.extra && custom.extra.lineWidth) || 2;
       const series = chartObj.chart.addLineSeries({
         color,
-        lineWidth: 2,
+        lineWidth,
         priceFormat: { type: "price", precision: 2, minMove: 0.01 }
       });
       chartObj.indicators[indId] = series;
@@ -460,8 +589,35 @@ export class ChartManager {
         this._toggleIndicator(chartId, ind.id);
         btn.classList.toggle("active");
       });
+      btn.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (confirm(`Удалить индикатор "${ind.label}"?`)) {
+          this._deleteCustomIndicator(ind.id, chartId, container, cfg);
+        }
+      });
       container.insertBefore(btn, container.lastChild);
     });
+  }
+
+  _deleteCustomIndicator(indId, chartId, container, cfg) {
+    const chartObj = this.charts.get(chartId);
+    if (chartObj && chartObj.indicators[indId]) {
+      chartObj.chart.removeSeries(chartObj.indicators[indId]);
+      delete chartObj.indicators[indId];
+      cfg._activeIndicators = (cfg._activeIndicators || []).filter(i => i !== indId);
+    }
+    const custom = loadCustomIndicators().filter(c => c.id !== indId);
+    saveCustomIndicators(custom);
+    if (!indId.startsWith("custom_")) {
+      const deleted = getDeletedIndicators();
+      if (!deleted.includes(indId)) {
+        deleted.push(indId);
+        localStorage.setItem("trading-dashboard-deleted-indicators", JSON.stringify(deleted));
+      }
+    }
+    mergeIndicators();
+    this._renderIndicatorButtons(container, chartId, cfg);
   }
 
   _showIndicatorModal(chartId) {
@@ -473,8 +629,24 @@ export class ChartManager {
     modal.innerHTML = `
       <h3>Новый индикатор</h3>
       <label>Тип</label>
-      <select id="ind-type">${INDICATOR_TYPES.map(t => `<option value="${t.id}">${t.label}</option>`).join("")}</select>
+      <select id="ind-type">
+        ${INDICATOR_TYPES.map(t => `<option value="${t.id}">${t.label}</option>`).join("")}
+        <option value="custom">Свой</option>
+      </select>
       <div id="ind-params"></div>
+      <div id="ind-custom-fields" style="display:none">
+        <label>Параметры (JSON)</label>
+        <textarea id="ind-params-json" rows="3" placeholder='{"period": 14, "offset": 0}'>{"period": 14}</textarea>
+        <label>Формула (на каждый бар)</label>
+        <textarea id="ind-formula" rows="5" placeholder="// Доступно: candles, i, c, params&#10;// c = candles[i], верни число&#10;c.close"></textarea>
+        <div style="font-size:10px;color:var(--text-secondary);margin-top:4px">
+          Примеры:<br>
+          SMA: <code>closes.slice(i-p+1, i+1).reduce((s,x)=>s+x,0)/p</code><br>
+          EMA: <code>prev = c.close*k + prev*(1-k)</code><br>
+          RSI: <code>100 - 100/(1 + gains/losses)</code><br>
+          <code>closes</code>, <code>highs</code>, <code>lows</code>, <code>volumes</code> — массивы значений
+        </div>
+      </div>
       <label>Имя</label>
       <input id="ind-name" placeholder="Мое_индикатора_14">
       <div class="ind-modal-btns">
@@ -487,12 +659,16 @@ export class ChartManager {
 
     const typeSelect = modal.querySelector("#ind-type");
     const paramsDiv = modal.querySelector("#ind-params");
+    const customFields = modal.querySelector("#ind-custom-fields");
     const nameInput = modal.querySelector("#ind-name");
 
     const renderParams = () => {
-      const type = INDICATOR_TYPES.find(t => t.id === typeSelect.value);
+      const isCustom = typeSelect.value === "custom";
+      customFields.style.display = isCustom ? "" : "none";
+      paramsDiv.style.display = isCustom ? "none" : "";
       paramsDiv.innerHTML = "";
-      if (!type) return;
+      const type = INDICATOR_TYPES.find(t => t.id === typeSelect.value);
+      if (!type || isCustom) return;
       type.params.forEach(p => {
         const label = document.createElement("label");
         label.textContent = p.label;
@@ -503,6 +679,54 @@ export class ChartManager {
         paramsDiv.appendChild(label);
         paramsDiv.appendChild(input);
       });
+      if (type.extra) {
+        type.extra.forEach(ex => {
+          const label = document.createElement("label");
+          label.textContent = ex.label;
+          if (ex.type === "color") {
+            const wrap = document.createElement("div");
+            wrap.style.display = "flex";
+            wrap.style.alignItems = "center";
+            wrap.style.gap = "6px";
+            const input = document.createElement("input");
+            input.type = "color";
+            input.value = ex.default;
+            input.dataset.extra = ex.key;
+            input.style.width = "40px";
+            input.style.height = "26px";
+            input.style.border = "none";
+            input.style.background = "none";
+            input.style.cursor = "pointer";
+            const span = document.createElement("span");
+            span.textContent = ex.default;
+            span.style.fontSize = "11px";
+            span.style.color = "var(--text-secondary)";
+            input.addEventListener("input", () => { span.textContent = input.value; });
+            wrap.appendChild(label);
+            wrap.appendChild(input);
+            wrap.appendChild(span);
+            paramsDiv.appendChild(wrap);
+          } else if (ex.type === "select") {
+            paramsDiv.appendChild(label);
+            const select = document.createElement("select");
+            select.dataset.extra = ex.key;
+            ex.options.forEach(o => {
+              const opt = document.createElement("option");
+              opt.value = o.value;
+              opt.textContent = o.label;
+              select.appendChild(opt);
+            });
+            paramsDiv.appendChild(select);
+          } else {
+            paramsDiv.appendChild(label);
+            const input = document.createElement("input");
+            input.type = "number";
+            input.value = ex.default;
+            input.dataset.extra = ex.key;
+            paramsDiv.appendChild(input);
+          }
+        });
+      }
       nameInput.placeholder = type.label + "_" + (type.params[0]?.default || "");
     };
     typeSelect.addEventListener("change", renderParams);
@@ -513,23 +737,64 @@ export class ChartManager {
 
     modal.querySelector(".ind-save").addEventListener("click", () => {
       const type = typeSelect.value;
-      const typeName = INDICATOR_TYPES.find(t => t.id === type)?.label || type;
-      const name = nameInput.value.trim() || typeName + "_" + (modal.querySelector("#ind-params input")?.value || "20");
-      const id = "custom_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
-      const params = {};
-      paramsDiv.querySelectorAll("input").forEach(inp => { params[inp.dataset.key] = Number(inp.value) || 0; });
+      const isCustom = type === "custom";
 
-      const custom = loadCustomIndicators();
-      custom.push({ id, label: name, type, params });
-      saveCustomIndicators(custom);
-      mergeIndicators();
+      if (isCustom) {
+        const name = nameInput.value.trim();
+        if (!name) { alert("Введите имя индикатора"); return; }
+        const paramsJson = modal.querySelector("#ind-params-json").value.trim();
+        const formula = modal.querySelector("#ind-formula").value.trim();
+        if (!formula) { alert("Введите формулу"); return; }
 
-      const chartObj = this.charts.get(chartId);
-      if (chartObj) {
-        const container = chartObj.container.querySelector(".ch-ind-buttons");
-        if (container) this._renderIndicatorButtons(container, chartId, chartObj.config);
+        let params = {};
+        try { params = JSON.parse(paramsJson); } catch(e) { alert("Неверный JSON параметров: " + e.message); return; }
+
+        const id = "custom_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+
+        try {
+          const testFn = new Function("candles", "i", "c", "params", "closes", "highs", "lows", "volumes", "prev", "emaCalc", "return (" + formula + ")");
+          const testCandles = [{ time: 0, open: 1, high: 2, low: 0, close: 1, volume: 1 }];
+          testFn(testCandles, 0, testCandles[0], params, [1], [2], [0], [1], { value: 1 }, null);
+        } catch(e) {
+          alert("Ошибка в формуле: " + e.message);
+          return;
+        }
+
+        const custom = loadCustomIndicators();
+        custom.push({ id, label: name, type: "custom", params, formula });
+        saveCustomIndicators(custom);
+        mergeIndicators();
+
+        const chartObj = this.charts.get(chartId);
+        if (chartObj) {
+          const container = chartObj.container.querySelector(".ch-ind-buttons");
+          if (container) this._renderIndicatorButtons(container, chartId, chartObj.config);
+        }
+        overlay.remove();
+      } else {
+        const typeName = INDICATOR_TYPES.find(t => t.id === type)?.label || type;
+        const name = nameInput.value.trim() || typeName + "_" + (modal.querySelector("#ind-params input")?.value || "20");
+        const id = "custom_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+        const params = {};
+        paramsDiv.querySelectorAll("input[data-key]").forEach(inp => { params[inp.dataset.key] = Number(inp.value) || 0; });
+        const extra = {};
+        paramsDiv.querySelectorAll("select[data-extra]").forEach(sel => { extra[sel.dataset.extra] = sel.value; });
+        paramsDiv.querySelectorAll("input[data-extra]").forEach(inp => {
+          extra[inp.dataset.extra] = inp.type === "color" ? inp.value : (Number(inp.value) || 0);
+        });
+
+        const custom = loadCustomIndicators();
+        custom.push({ id, label: name, type, params, extra });
+        saveCustomIndicators(custom);
+        mergeIndicators();
+
+        const chartObj = this.charts.get(chartId);
+        if (chartObj) {
+          const container = chartObj.container.querySelector(".ch-ind-buttons");
+          if (container) this._renderIndicatorButtons(container, chartId, chartObj.config);
+        }
+        overlay.remove();
       }
-      overlay.remove();
     });
   }
 
@@ -543,6 +808,21 @@ export class ChartManager {
       let prev = data[0].value;
       return data.map(d => { prev = d.value * k + prev * (1 - k); return { time: d.time, value: prev }; });
     };
+
+    if (custom && custom.type === "custom" && custom.formula) {
+      const closes = candles.map(c => c.close);
+      const highs = candles.map(c => c.high);
+      const lows = candles.map(c => c.low);
+      const volumes = candles.map(c => c.volume);
+      let prev = { value: closes[0] || 0 };
+      try {
+        const fn = new Function("candles", "i", "c", "params", "closes", "highs", "lows", "volumes", "prev", "emaCalc", "return (" + custom.formula + ")");
+        return candles.map((c, i) => ({ time: c.time, value: fn(candles, i, c, params, closes, highs, lows, volumes, prev, emaCalc) || 0 }));
+      } catch(e) {
+        log(`Formula error for ${indId}:`, e.message);
+        return candles.map(c => ({ time: c.time, value: 0 }));
+      }
+    }
 
     if (indId === "sma" || (custom && custom.type === "sma")) {
       return candles.map((c, i) => {
@@ -621,6 +901,79 @@ export class ChartManager {
         kValues.push(high === low ? 50 : ((candles[i].close - low) / (high - low)) * 100);
       }
       return kValues.map((v, i) => ({ time: candles[i].time, value: v }));
+    }
+    if (indId === "poc" || (custom && custom.type === "poc")) {
+      const p = period;
+      const numBins = params.bins || 30;
+      const extendMode = (custom && custom.extra && custom.extra.extendMode) || "day";
+
+      const calcPocForSlice = (slice) => {
+        if (slice.length < 2) return null;
+        const minP = Math.min(...slice.map(x => x.low));
+        const maxP = Math.max(...slice.map(x => x.high));
+        if (maxP === minP) return null;
+        const binSize = (maxP - minP) / numBins;
+        const volAtPrice = new Array(numBins).fill(0);
+        for (const candle of slice) {
+          const avgPrice = (candle.high + candle.low + candle.close) / 3;
+          let bin = Math.floor((avgPrice - minP) / binSize);
+          if (bin >= numBins) bin = numBins - 1;
+          if (bin < 0) bin = 0;
+          volAtPrice[bin] += candle.volume;
+        }
+        let maxVol = 0, pocBin = 0;
+        for (let b = 0; b < numBins; b++) {
+          if (volAtPrice[b] > maxVol) { maxVol = volAtPrice[b]; pocBin = b; }
+        }
+        return minP + (pocBin + 0.5) * binSize;
+      };
+
+      if (p === 0) {
+        const dayStart = {};
+        candles.forEach((c, i) => {
+          const d = new Date(c.time * 1000).toISOString().slice(0, 10);
+          if (!(d in dayStart)) dayStart[d] = i;
+        });
+        const result = [];
+        const days = Object.keys(dayStart).sort();
+        for (let di = 0; di < days.length; di++) {
+          const startIdx = dayStart[days[di]];
+          const endIdx = di < days.length - 1 ? dayStart[days[di + 1]] : candles.length;
+          const daySlice = candles.slice(startIdx, endIdx);
+          const poc = calcPocForSlice(daySlice);
+          for (let i = startIdx; i < endIdx; i++) {
+            result.push({ time: candles[i].time, value: poc !== null ? poc : candles[i].close });
+          }
+        }
+        if (extendMode === "cross") {
+          let lastPoc = result[0].value;
+          return result.map((r, i) => {
+            if (candles[i].close < lastPoc && candles[i].low <= lastPoc) lastPoc = r.value;
+            else if (candles[i].close > lastPoc && candles[i].high >= lastPoc) lastPoc = r.value;
+            return { time: r.time, value: lastPoc };
+          });
+        }
+        return result;
+      }
+
+      const rawPoc = candles.map((c, i) => {
+        const start = Math.max(0, i - p + 1);
+        const slice = candles.slice(start, i + 1);
+        const poc = calcPocForSlice(slice);
+        return poc !== null ? poc : c.close;
+      });
+      if (extendMode === "cross") {
+        let lastPoc = rawPoc[0];
+        return candles.map((c, i) => {
+          if (c.close < lastPoc && c.low <= lastPoc) {
+            lastPoc = rawPoc[i];
+          } else if (c.close > lastPoc && c.high >= lastPoc) {
+            lastPoc = rawPoc[i];
+          }
+          return { time: c.time, value: lastPoc };
+        });
+      }
+      return rawPoc.map((v, i) => ({ time: candles[i].time, value: v }));
     }
     return null;
   }
@@ -789,6 +1142,21 @@ export class ChartManager {
     chartObj.mainSeries = mainSeries;
     chartObj.volumeSeries = volumeSeries;
 
+    const savedSettings = this._getChartSettings(id);
+    if (Object.keys(savedSettings).length > 0) {
+      this._applyChartSettings(chartObj, savedSettings);
+    }
+
+    const gearBtn = document.createElement("button");
+    gearBtn.className = "chart-settings-btn";
+    gearBtn.textContent = "⚙";
+    gearBtn.title = "Настройки графика";
+    gearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._showChartSettings(id);
+    });
+    body.appendChild(gearBtn);
+
     const resizeObserver = new ResizeObserver((entries) => {
       if (entries[0]) {
         const { width, height } = entries[0].contentRect;
@@ -907,12 +1275,8 @@ export class ChartManager {
 
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
-        const len = formattedData.length;
-        const visibleCount = Math.min(50, len);
-        chartObj.chart.timeScale().setVisibleLogicalRange({
-          from: len - visibleCount,
-          to: len + 5
-        });
+        chartObj.chart.timeScale().fitContent();
+        chartObj.chart.timeScale().scrollToPosition(5, false);
       });
     });
   }

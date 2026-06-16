@@ -242,7 +242,9 @@
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
   padding: 16px;
-  width: 300px;
+  width: 400px;
+  max-height: 80vh;
+  overflow-y: auto;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 
@@ -274,8 +276,23 @@
 }
 
 .ind-modal select:focus,
-.ind-modal input:focus {
+.ind-modal input:focus,
+.ind-modal textarea:focus {
   border-color: var(--accent-blue);
+}
+
+.ind-modal textarea {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: monospace;
+  outline: none;
+  box-sizing: border-box;
+  resize: vertical;
 }
 
 .ind-modal-btns {
@@ -298,6 +315,17 @@
 .ind-modal-btns .ind-save {
   background: var(--accent-blue);
   border-color: var(--accent-blue);
+  color: white;
+}
+
+.ind-modal-btns .ind-reset {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--accent-red);
+  color: var(--accent-red);
+}
+
+.ind-modal-btns .ind-reset:hover {
+  background: var(--accent-red);
   color: white;
 }
 
@@ -407,4 +435,27 @@
 
 .hline-ctx-danger {
   color: var(--accent-red);
+}
+
+.chart-settings-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.chart-settings-color input[type=color] {
+  width: 40px;
+  height: 28px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 1px;
+  cursor: pointer;
+  background: none;
+}
+
+.chart-settings-color span {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: monospace;
 }

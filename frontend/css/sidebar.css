@@ -263,3 +263,24 @@
 .change-pct {
   color: var(--accent-green);
 }
+
+.chart-settings-btn {
+  position: absolute;
+  bottom: 4px;
+  right: 30px;
+  z-index: 5;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 6px;
+  transition: all var(--transition);
+}
+
+.chart-settings-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-light);
+}
