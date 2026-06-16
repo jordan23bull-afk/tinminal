@@ -146,11 +146,10 @@ function mergeIndicators() {
 const CUSTOM_INDICATORS_KEY = "trading-dashboard-custom-indicators";
 
 export class ChartManager {
-  constructor(containerId, onChartChange, onStateChange) {
+  constructor(containerId, onChartChange) {
     this.container = document.getElementById(containerId);
     this.charts = new Map();
     this.onChartChange = onChartChange || (() => {});
-    this.onStateChange = onStateChange || (() => {});
     this.indicatorColors = {
       rsi: "#2962FF",
       macd: "#FF6D00",
@@ -249,7 +248,6 @@ export class ChartManager {
       title: ""
     });
     chartObj._horizontalLines = chartObj._horizontalLines.map(l => l === line ? newLine : l);
-    this.onStateChange();
   }
 
   _removeLineByPrice(chartId, price) {
@@ -264,7 +262,6 @@ export class ChartManager {
       chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== line);
     }
     this.removeAlert(chartId, price);
-    this.onStateChange();
   }
 
   checkAlerts(candle) {
@@ -1107,10 +1104,9 @@ export class ChartManager {
       }
       if (closest && minDist < 20) {
         const removedPrice = closest.options().price;
-      chartObj.mainSeries.removePriceLine(closest);
-      chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== closest);
-      this.removeAlert(id, removedPrice);
-      this.onStateChange();
+        chartObj.mainSeries.removePriceLine(closest);
+        chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== closest);
+        this.removeAlert(id, removedPrice);
       }
     }, true);
 
@@ -1375,7 +1371,6 @@ export class ChartManager {
     });
     chartObj._horizontalLines.push(line);
     log(`Horizontal line added at ${price}`);
-    this.onStateChange();
   }
 
   removeAllHorizontalLines(chartId) {
@@ -1385,7 +1380,6 @@ export class ChartManager {
       chartObj.mainSeries.removePriceLine(line);
     }
     chartObj._horizontalLines = [];
-    this.onStateChange();
   }
 
   getAllChartIds() {
