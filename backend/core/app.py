@@ -26,6 +26,7 @@ active_streams = {}
 
 def broadcast_candle(symbol, timeframe, candle):
     room = f"{symbol}_{timeframe}"
+    logger.info(f"[WS] Broadcasting to room={room}: close={candle.get('close')} time={candle.get('time')}")
     socketio.emit("candle_update", {
         "symbol": symbol,
         "timeframe": timeframe,
@@ -108,19 +109,24 @@ def on_subscribe(data):
         source_name = data.get("source", "moex")
         room = f"{symbol}_{timeframe}"
 
+        logger.info(f"[WS] Subscribe request: symbol={symbol} tf={timeframe} source={source_name} room={room}")
+
         join_room(room)
-        logger.info(f"Client {request.sid} subscribed to {room}")
+        logger.info(f"[WS] Client {request.sid} joined room {room}")
 
         if room not in active_streams:
             active_streams[room] = True
-            logger.info(f"Starting stream for {room}")
+            logger.info(f"[WS] Starting new stream for {room}")
 
             source = ModuleRegistry.get_data_source(source_name)
+            logger.info(f"[WS] Got source: {source_name}, calling subscribe_realtime...")
 
             def on_candle(candle, s=symbol, t=timeframe):
                 broadcast_candle(s, t, candle)
 
             source.subscribe_realtime(symbol, timeframe, on_candle)
+        else:
+            logger.info(f"[WS] Stream already active for {room}")
 
         emit("subscribed", {"room": room})
     except Exception as e:
@@ -144,4 +150,4 @@ if __name__ == "__main__":
     logger.info(f"Loaded sources: {ModuleRegistry.list_data_sources()}")
     logger.info(f"Loaded indicators: {ModuleRegistry.list_indicators()}")
     logger.info("=== Open http://localhost:5000 in browser ===")
-    socketio.run(app, host="localhost", port=5000, debug=False)
+    socketio.run(app, host="localhost", port=5000, debug=True)

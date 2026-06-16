@@ -32,6 +32,21 @@ function removeSymbolFromAll(ticker) {
     const filtered = tickers.filter(t => t.ticker !== ticker);
     localStorage.setItem("trading-dashboard-custom-tickers", JSON.stringify(filtered));
   } catch {}
+  try {
+    const raw = localStorage.getItem("trading-dashboard-deleted-tickers");
+    const deleted = raw ? JSON.parse(raw) : [];
+    if (!deleted.includes(ticker)) {
+      deleted.push(ticker);
+      localStorage.setItem("trading-dashboard-deleted-tickers", JSON.stringify(deleted));
+    }
+  } catch {}
+}
+
+function getDeletedTickers() {
+  try {
+    const raw = localStorage.getItem("trading-dashboard-deleted-tickers");
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
 }
 
 function refreshAllSymbolDropdowns() {
@@ -52,18 +67,61 @@ function refreshAllSymbolDropdowns() {
 
 const TIMEFRAMES = [
   { tf: "1m", label: "1m" },
-  { tf: "5m", label: "5m" },
-  { tf: "15m", label: "15m" },
+  { tf: "10m", label: "10m" },
   { tf: "1h", label: "1ч" },
-  { tf: "4h", label: "4ч" },
   { tf: "1d", label: "Д" },
 ];
 
-const INDICATORS = [
-  { id: "rsi", label: "RSI" },
-  { id: "macd", label: "MACD" },
-  { id: "sma", label: "SMA" },
+const INDICATOR_TYPES = [
+  { id: "sma", label: "SMA", params: [{ key: "period", label: "Период", default: 20 }] },
+  { id: "ema", label: "EMA", params: [{ key: "period", label: "Период", default: 20 }] },
+  { id: "rsi", label: "RSI", params: [{ key: "period", label: "Период", default: 14 }] },
+  { id: "macd", label: "MACD", params: [
+    { key: "fast", label: "Быстрый", default: 12 },
+    { key: "slow", label: "Медленный", default: 26 },
+    { key: "signal", label: "Сигнал", default: 9 }
+  ]},
+  { id: "bollinger", label: "Bollinger", params: [
+    { key: "period", label: "Период", default: 20 },
+    { key: "stddev", label: "Отклонение", default: 2 }
+  ]},
+  { id: "atr", label: "ATR", params: [{ key: "period", label: "Период", default: 14 }] },
+  { id: "wma", label: "WMA", params: [{ key: "period", label: "Период", default: 20 }] },
+  { id: "stoch", label: "Stochastic", params: [
+    { key: "k", label: "%K", default: 14 },
+    { key: "d", label: "%D", default: 3 }
+  ]},
 ];
+
+const INDICATORS = [];
+
+function loadCustomIndicators() {
+  try {
+    const raw = localStorage.getItem("trading-dashboard-custom-indicators");
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveCustomIndicators(list) {
+  localStorage.setItem("trading-dashboard-custom-indicators", JSON.stringify(list));
+}
+
+function mergeIndicators() {
+  const custom = loadCustomIndicators();
+  INDICATORS.length = 0;
+  INDICATORS.push(
+    { id: "rsi", label: "RSI" },
+    { id: "macd", label: "MACD" },
+    { id: "sma", label: "SMA" },
+  );
+  custom.forEach(c => {
+    if (!INDICATORS.find(i => i.id === c.id)) {
+      INDICATORS.push({ id: c.id, label: c.label, params: c.params });
+    }
+  });
+}
+
+const CUSTOM_INDICATORS_KEY = "trading-dashboard-custom-indicators";
 
 export class ChartManager {
   constructor(containerId, onChartChange) {
@@ -234,6 +292,7 @@ export class ChartManager {
     const symbolDropdown = document.createElement("div");
     symbolDropdown.className = "ch-symbol-dropdown hidden";
     symbolDropdown.dataset.chartId = id;
+    document.body.appendChild(symbolDropdown);
 
     const searchInput = document.createElement("input");
     searchInput.type = "text";
@@ -260,6 +319,11 @@ export class ChartManager {
       });
       symbolDropdown.classList.toggle("hidden");
       if (!symbolDropdown.classList.contains("hidden")) {
+        const rect = symbolBtn.getBoundingClientRect();
+        symbolDropdown.style.position = "fixed";
+        symbolDropdown.style.top = rect.bottom + "px";
+        symbolDropdown.style.left = rect.left + "px";
+        symbolDropdown.style.zIndex = "10000";
         searchInput.value = "";
         searchInput.focus();
         list.querySelectorAll(".ch-symbol-item").forEach(i => i.style.display = "");
@@ -327,38 +391,24 @@ export class ChartManager {
       this._updateChartConfig(id, { chartType: typeSelect.value });
     });
 
-    const indBtn = document.createElement("button");
-    indBtn.className = "ch-ind-btn";
-    indBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M2 12h2V7H2v5zm4 0h2V4H6v8zm4 0h2V2h-2v10zm4 0h2V6h-2v6z"/></svg>`;
+    const indContainer = document.createElement("div");
+    indContainer.className = "ch-ind-buttons";
+    this._renderIndicatorButtons(indContainer, id, cfg);
 
-    const indDropdown = document.createElement("div");
-    indDropdown.className = "ch-ind-dropdown hidden";
-    INDICATORS.forEach(ind => {
-      const btn = document.createElement("button");
-      btn.className = "ch-ind-item";
-      btn.dataset.indicator = ind.id;
-      btn.textContent = ind.label;
-      btn.addEventListener("click", () => {
-        this._toggleIndicator(id, ind.id);
-        btn.classList.toggle("active");
-      });
-      indDropdown.appendChild(btn);
-    });
-
-    indBtn.addEventListener("click", (e) => {
+    const addIndBtn = document.createElement("button");
+    addIndBtn.className = "ch-ind-btn";
+    addIndBtn.textContent = "+";
+    addIndBtn.title = "Создать индикатор";
+    addIndBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      document.querySelectorAll(".ch-ind-dropdown").forEach(d => {
-        if (d !== indDropdown) d.classList.add("hidden");
-      });
-      indDropdown.classList.toggle("hidden");
+      this._showIndicatorModal(id);
     });
+    indContainer.appendChild(addIndBtn);
 
     header.appendChild(symbolBtn);
-    header.appendChild(symbolDropdown);
     header.appendChild(tfContainer);
     header.appendChild(typeSelect);
-    header.appendChild(indBtn);
-    header.appendChild(indDropdown);
+    header.appendChild(indContainer);
 
     return header;
   }
@@ -373,10 +423,12 @@ export class ChartManager {
   _toggleIndicator(id, indId) {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
+    if (!chartObj.config._activeIndicators) chartObj.config._activeIndicators = [];
 
     if (chartObj.indicators[indId]) {
       chartObj.chart.removeSeries(chartObj.indicators[indId]);
       delete chartObj.indicators[indId];
+      chartObj.config._activeIndicators = chartObj.config._activeIndicators.filter(i => i !== indId);
     } else {
       const color = this.indicatorColors[indId] || "#787B86";
       const series = chartObj.chart.addLineSeries({
@@ -385,6 +437,7 @@ export class ChartManager {
         priceFormat: { type: "price", precision: 2, minMove: 0.01 }
       });
       chartObj.indicators[indId] = series;
+      chartObj.config._activeIndicators.push(indId);
 
       if (chartObj.config._lastCandles) {
         const data = this._calcIndicator(indId, chartObj.config._lastCandles);
@@ -393,26 +446,122 @@ export class ChartManager {
     }
   }
 
+  _renderIndicatorButtons(container, chartId, cfg) {
+    container.querySelectorAll(".ch-ind-btn[data-indicator]").forEach(b => b.remove());
+    INDICATORS.forEach(ind => {
+      const btn = document.createElement("button");
+      btn.className = "ch-ind-btn";
+      btn.textContent = ind.label;
+      btn.dataset.indicator = ind.id;
+      if (cfg._activeIndicators && cfg._activeIndicators.includes(ind.id)) {
+        btn.classList.add("active");
+      }
+      btn.addEventListener("click", () => {
+        this._toggleIndicator(chartId, ind.id);
+        btn.classList.toggle("active");
+      });
+      container.insertBefore(btn, container.lastChild);
+    });
+  }
+
+  _showIndicatorModal(chartId) {
+    const overlay = document.createElement("div");
+    overlay.className = "ind-modal-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "ind-modal";
+    modal.innerHTML = `
+      <h3>Новый индикатор</h3>
+      <label>Тип</label>
+      <select id="ind-type">${INDICATOR_TYPES.map(t => `<option value="${t.id}">${t.label}</option>`).join("")}</select>
+      <div id="ind-params"></div>
+      <label>Имя</label>
+      <input id="ind-name" placeholder="Мое_индикатора_14">
+      <div class="ind-modal-btns">
+        <button class="ind-cancel">Отмена</button>
+        <button class="ind-save">Сохранить</button>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const typeSelect = modal.querySelector("#ind-type");
+    const paramsDiv = modal.querySelector("#ind-params");
+    const nameInput = modal.querySelector("#ind-name");
+
+    const renderParams = () => {
+      const type = INDICATOR_TYPES.find(t => t.id === typeSelect.value);
+      paramsDiv.innerHTML = "";
+      if (!type) return;
+      type.params.forEach(p => {
+        const label = document.createElement("label");
+        label.textContent = p.label;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.value = p.default;
+        input.dataset.key = p.key;
+        paramsDiv.appendChild(label);
+        paramsDiv.appendChild(input);
+      });
+      nameInput.placeholder = type.label + "_" + (type.params[0]?.default || "");
+    };
+    typeSelect.addEventListener("change", renderParams);
+    renderParams();
+
+    modal.querySelector(".ind-cancel").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    modal.querySelector(".ind-save").addEventListener("click", () => {
+      const type = typeSelect.value;
+      const typeName = INDICATOR_TYPES.find(t => t.id === type)?.label || type;
+      const name = nameInput.value.trim() || typeName + "_" + (modal.querySelector("#ind-params input")?.value || "20");
+      const id = "custom_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      const params = {};
+      paramsDiv.querySelectorAll("input").forEach(inp => { params[inp.dataset.key] = Number(inp.value) || 0; });
+
+      const custom = loadCustomIndicators();
+      custom.push({ id, label: name, type, params });
+      saveCustomIndicators(custom);
+      mergeIndicators();
+
+      const chartObj = this.charts.get(chartId);
+      if (chartObj) {
+        const container = chartObj.container.querySelector(".ch-ind-buttons");
+        if (container) this._renderIndicatorButtons(container, chartId, chartObj.config);
+      }
+      overlay.remove();
+    });
+  }
+
   _calcIndicator(indId, candles) {
-    if (indId === "sma") {
-      const period = 20;
+    const custom = loadCustomIndicators().find(c => c.id === indId);
+    const params = custom ? custom.params : {};
+    const period = params.period || 20;
+
+    const emaCalc = (data, p) => {
+      const k = 2 / (p + 1);
+      let prev = data[0].value;
+      return data.map(d => { prev = d.value * k + prev * (1 - k); return { time: d.time, value: prev }; });
+    };
+
+    if (indId === "sma" || (custom && custom.type === "sma")) {
       return candles.map((c, i) => {
         if (i < period - 1) return { time: c.time, value: c.close };
         const slice = candles.slice(i - period + 1, i + 1);
-        const avg = slice.reduce((s, x) => s + x.close, 0) / period;
-        return { time: c.time, value: avg };
+        return { time: c.time, value: slice.reduce((s, x) => s + x.close, 0) / period };
       });
     }
-    if (indId === "rsi") {
-      const period = 14;
+    if (indId === "ema" || (custom && custom.type === "ema")) {
+      const closes = candles.map(c => ({ time: c.time, value: c.close }));
+      return emaCalc(closes, period);
+    }
+    if (indId === "rsi" || (custom && custom.type === "rsi")) {
+      const p = period;
       const result = [];
       for (let i = 0; i < candles.length; i++) {
-        if (i < period) {
-          result.push({ time: candles[i].time, value: 50 });
-          continue;
-        }
+        if (i < p) { result.push({ time: candles[i].time, value: 50 }); continue; }
         let gains = 0, losses = 0;
-        for (let j = i - period + 1; j <= i; j++) {
+        for (let j = i - p + 1; j <= i; j++) {
           const diff = candles[j].close - candles[j].open;
           if (diff > 0) gains += diff; else losses -= diff;
         }
@@ -421,16 +570,57 @@ export class ChartManager {
       }
       return result;
     }
-    if (indId === "macd") {
-      const ema = (data, period) => {
-        const k = 2 / (period + 1);
-        let prev = data[0].value;
-        return data.map(d => { prev = d.value * k + prev * (1 - k); return { time: d.time, value: prev }; });
-      };
+    if (indId === "macd" || (custom && custom.type === "macd")) {
+      const fast = params.fast || 12, slow = params.slow || 26;
       const closes = candles.map(c => ({ time: c.time, value: c.close }));
-      const ema12 = ema(closes, 12);
-      const ema26 = ema(closes, 26);
+      const ema12 = emaCalc(closes, fast);
+      const ema26 = emaCalc(closes, slow);
       return ema12.map((d, i) => ({ time: d.time, value: d.value - ema26[i].value }));
+    }
+    if (custom && custom.type === "bollinger") {
+      const p = params.period || 20, mult = params.stddev || 2;
+      const upper = [], lower = [];
+      for (let i = 0; i < candles.length; i++) {
+        if (i < p - 1) { upper.push({ time: candles[i].time, value: candles[i].close }); lower.push({ time: candles[i].time, value: candles[i].close }); continue; }
+        const slice = candles.slice(i - p + 1, i + 1);
+        const avg = slice.reduce((s, x) => s + x.close, 0) / p;
+        const std = Math.sqrt(slice.reduce((s, x) => s + (x.close - avg) ** 2, 0) / p);
+        upper.push({ time: candles[i].time, value: avg + mult * std });
+        lower.push({ time: candles[i].time, value: avg - mult * std });
+      }
+      return upper;
+    }
+    if (custom && custom.type === "atr") {
+      const p = period;
+      return candles.map((c, i) => {
+        if (i === 0) return { time: c.time, value: c.high - c.low };
+        const tr = Math.max(c.high - c.low, Math.abs(c.high - candles[i-1].close), Math.abs(c.low - candles[i-1].close));
+        if (i < p) return { time: c.time, value: tr };
+        const slice = candles.slice(i - p + 1, i + 1);
+        return { time: c.time, value: slice.reduce((s, x) => s + (x.high - x.low), 0) / p };
+      });
+    }
+    if (custom && custom.type === "wma") {
+      const p = period;
+      const denom = p * (p + 1) / 2;
+      return candles.map((c, i) => {
+        if (i < p - 1) return { time: c.time, value: c.close };
+        let sum = 0;
+        for (let j = 0; j < p; j++) sum += candles[i - p + 1 + j].close * (j + 1);
+        return { time: c.time, value: sum / denom };
+      });
+    }
+    if (custom && custom.type === "stoch") {
+      const kPeriod = params.k || 14, dPeriod = params.d || 3;
+      const kValues = [];
+      for (let i = 0; i < candles.length; i++) {
+        if (i < kPeriod - 1) { kValues.push(50); continue; }
+        const slice = candles.slice(i - kPeriod + 1, i + 1);
+        const high = Math.max(...slice.map(c => c.high));
+        const low = Math.min(...slice.map(c => c.low));
+        kValues.push(high === low ? 50 : ((candles[i].close - low) / (high - low)) * 100);
+      }
+      return kValues.map((v, i) => ({ time: candles[i].time, value: v }));
     }
     return null;
   }
@@ -619,7 +809,7 @@ export class ChartManager {
         chart.applyOptions({ width: r.width, height: r.height });
       }
       chart.timeScale().fitContent();
-      chart.timeScale().scrollToPosition(1, false);
+      chart.timeScale().scrollToPosition(5, false);
       setTimeout(() => {
         const r2 = body.getBoundingClientRect();
         if (r2.width > 0 && r2.height > 0) {
@@ -699,35 +889,8 @@ export class ChartManager {
     const formattedData = this._formatDataForType(candles, chartObj.chartType);
     const volumeData = this._formatVolumeData(candles);
 
-    if (formattedData.length <= 50) {
-      chartObj.mainSeries.setData(formattedData);
-      chartObj.volumeSeries.setData(volumeData);
-    } else {
-      const tail = 50;
-      chartObj.mainSeries.setData(formattedData.slice(-tail));
-      chartObj.volumeSeries.setData(volumeData.slice(-tail));
-
-      const batchSize = 80;
-      let idx = formattedData.length - tail;
-
-      const renderBatch = () => {
-        if (idx <= 0) {
-          chartObj.mainSeries.setData(formattedData);
-          chartObj.volumeSeries.setData(volumeData);
-          chartObj.chart.timeScale().fitContent();
-          chartObj.chart.timeScale().scrollToPosition(1, false);
-          return;
-        }
-        const start = Math.max(0, idx - batchSize);
-        const chunkMain = formattedData.slice(start, idx + tail);
-        const chunkVol = volumeData.slice(start, idx + tail);
-        chartObj.mainSeries.setData(chunkMain);
-        chartObj.volumeSeries.setData(chunkVol);
-        idx = start;
-        requestAnimationFrame(renderBatch);
-      };
-      requestAnimationFrame(renderBatch);
-    }
+    chartObj.mainSeries.setData(formattedData);
+    chartObj.volumeSeries.setData(volumeData);
 
     for (const [indName, values] of Object.entries(indicators)) {
       if (!chartObj.indicators[indName]) {
@@ -742,27 +905,54 @@ export class ChartManager {
       chartObj.indicators[indName].setData(values);
     }
 
-    chartObj.chart.timeScale().fitContent();
-    chartObj.chart.timeScale().scrollToPosition(1, false);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const len = formattedData.length;
+        const visibleCount = Math.min(50, len);
+        chartObj.chart.timeScale().setVisibleLogicalRange({
+          from: len - visibleCount,
+          to: len + 5
+        });
+      });
+    });
   }
 
   updateCandle(id, candle) {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
 
-    if (chartObj.chartType === "candlestick" || chartObj.chartType === "bar") {
-      chartObj.mainSeries.update(candle);
-    } else {
-      chartObj.mainSeries.update({ time: candle.time, value: candle.close });
+    try {
+      if (chartObj.chartType === "candlestick" || chartObj.chartType === "bar") {
+        const data = chartObj.mainSeries.data();
+        const last = data.length > 0 ? data[data.length - 1] : null;
+
+        if (last && candle.time === last.time) {
+          chartObj.mainSeries.update(candle);
+        } else {
+          chartObj.mainSeries.update({
+            time: candle.time,
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close
+          });
+        }
+      } else {
+        chartObj.mainSeries.update({ time: candle.time, value: candle.close });
+      }
+
+      chartObj.volumeSeries.update({
+        time: candle.time,
+        value: candle.volume,
+        color: candle.close >= candle.open ? "rgba(38, 166, 154, 0.5)" : "rgba(239, 83, 80, 0.5)"
+      });
+    } catch (e) {
+      log(`Update candle error for ${chartObj.config.symbol}:`, e.message);
+      return;
     }
 
-    chartObj.volumeSeries.update({
-      time: candle.time,
-      value: candle.volume,
-      color: candle.close >= candle.open ? "rgba(38, 166, 154, 0.5)" : "rgba(239, 83, 80, 0.5)"
-    });
-
     this.checkAlerts(candle);
+    chartObj.chart.timeScale().scrollToPosition(5, false);
   }
 
   changeChartType(id, newType) {
@@ -782,7 +972,7 @@ export class ChartManager {
       const formattedData = this._formatDataForType(chartObj.config._lastCandles, newType);
       newSeries.setData(formattedData);
       chartObj.chart.timeScale().fitContent();
-      chartObj.chart.timeScale().scrollToPosition(1, false);
+      chartObj.chart.timeScale().scrollToPosition(5, false);
     }
 
     savedLines.forEach(price => this.addHorizontalLine(id, price));
@@ -839,4 +1029,4 @@ export class ChartManager {
   }
 }
 
-export { addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns };
+export { addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns, mergeIndicators, getDeletedTickers };

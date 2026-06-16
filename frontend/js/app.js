@@ -1,4 +1,4 @@
-import { ChartManager, addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns } from "./chart-manager.js";
+import { ChartManager, addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns, mergeIndicators, getDeletedTickers } from "./chart-manager.js";
 import { WSClient } from "./ws-client.js";
 import { LayoutManager } from "./layout-manager.js";
 import { generateId, log } from "./utils.js";
@@ -40,6 +40,7 @@ function loadChartData(chartId, symbol, timeframe, source, chartType) {
     .catch(e => log("Load chart data error:", e));
 }
 
+mergeIndicators();
 const chartManager = new ChartManager("charts-grid", loadChartData);
 const wsClient = new WSClient();
 const layoutManager = new LayoutManager(document.getElementById("charts-grid"));
@@ -112,7 +113,15 @@ function setupWatchlistItem(item) {
   }
 }
 
-document.querySelectorAll(".watchlist-item").forEach(setupWatchlistItem);
+const deletedTickers = getDeletedTickers();
+deletedTickers.forEach(t => removeSymbolFromAll(t));
+document.querySelectorAll(".watchlist-item").forEach(item => {
+  if (deletedTickers.includes(item.dataset.symbol)) {
+    item.remove();
+    return;
+  }
+  setupWatchlistItem(item);
+});
 
 // Custom tickers
 const CUSTOM_TICKERS_KEY = "trading-dashboard-custom-tickers";
@@ -193,11 +202,10 @@ if (sidebarResize && sidebarRight) {
 // Update clock
 function updateClock() {
   const now = new Date();
-  const h = String(now.getHours()).padStart(2, "0");
-  const m = String(now.getMinutes()).padStart(2, "0");
-  const s = String(now.getSeconds()).padStart(2, "0");
-  const offset = -now.getTimezoneOffset() / 60;
-  currentTimeEl.textContent = `${h}:${m}:${s} UTC${offset >= 0 ? "+" : ""}${offset}`;
+  const h = String(now.getUTCHours() + 3).padStart(2, "0");
+  const m = String(now.getUTCMinutes()).padStart(2, "0");
+  const s = String(now.getUTCSeconds()).padStart(2, "0");
+  currentTimeEl.textContent = `${h}:${m}:${s} MSK`;
 }
 setInterval(updateClock, 1000);
 updateClock();
@@ -493,12 +501,6 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const state = JSON.parse(raw);
-    if (state.charts) {
-      state.charts.forEach(c => {
-        if (!c.timeframe || c.timeframe === "4h") c.timeframe = "1h";
-      });
-    }
-    if (state.timeframe === "4h") state.timeframe = "1h";
     return state;
   } catch (e) {
     log("Failed to load state:", e);

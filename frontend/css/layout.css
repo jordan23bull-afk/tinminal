@@ -69,15 +69,12 @@
 }
 
 .ch-symbol-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
   width: 220px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-  z-index: 100;
+  z-index: 10000;
   overflow: hidden;
 }
 
@@ -201,66 +198,107 @@
   background: var(--bg-tertiary);
 }
 
-.ch-ind-btn {
+.ch-ind-buttons {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 20px;
+  gap: 1px;
+  background: var(--bg-primary);
+  border-radius: var(--radius);
+  padding: 2px;
+}
+
+.ch-ind-btn {
   background: transparent;
-  border: 1px solid var(--border-color);
+  border: none;
   color: var(--text-secondary);
-  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 10px;
   cursor: pointer;
+  border-radius: 3px;
   transition: all var(--transition);
-  margin-left: auto;
-  position: relative;
 }
 
 .ch-ind-btn:hover {
   color: var(--text-primary);
-  border-color: var(--border-light);
   background: var(--bg-tertiary);
 }
 
-.ch-ind-dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
+.ch-ind-btn.active {
+  color: var(--accent-blue);
+  background: var(--bg-active);
+}
+
+.ind-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ind-modal {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
-  z-index: 100;
-  padding: 3px;
-  min-width: 80px;
+  padding: 16px;
+  width: 300px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 
-.ch-ind-dropdown.hidden {
-  display: none;
-}
-
-.ch-ind-item {
-  display: block;
-  width: 100%;
-  background: transparent;
-  border: none;
+.ind-modal h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
   color: var(--text-primary);
-  padding: 4px 10px;
+}
+
+.ind-modal label {
+  display: block;
   font-size: 11px;
-  text-align: left;
-  cursor: pointer;
-  border-radius: 3px;
-  transition: background var(--transition);
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  margin-top: 8px;
 }
 
-.ch-ind-item:hover {
+.ind-modal select,
+.ind-modal input {
+  width: 100%;
   background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  padding: 6px 8px;
+  font-size: 12px;
+  outline: none;
+  box-sizing: border-box;
 }
 
-.ch-ind-item.active {
-  color: var(--accent-blue);
-  background: var(--bg-active);
+.ind-modal select:focus,
+.ind-modal input:focus {
+  border-color: var(--accent-blue);
+}
+
+.ind-modal-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  justify-content: flex-end;
+}
+
+.ind-modal-btns button {
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ind-modal-btns .ind-save {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: white;
 }
 
 .chart-body {
