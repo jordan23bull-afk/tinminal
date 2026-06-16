@@ -6,7 +6,7 @@ import { generateId, log } from "./utils.js";
 let selectedTimeframe = "1h";
 let isLoading = false;
 
-function loadChartData(chartId, symbol, timeframe, source, chartType) {
+function loadChartData(chartId, symbol, timeframe, source, chartType, onLoad) {
   if (wsClient.connected) {
     wsClient.subscribe(symbol, timeframe, source);
   }
@@ -36,12 +36,16 @@ function loadChartData(chartId, symbol, timeframe, source, chartType) {
           chartManager.checkAlerts(data.candles[data.candles.length - 1]);
         }
       }
+      if (onLoad) onLoad();
     })
-    .catch(e => log("Load chart data error:", e));
+    .catch(e => {
+      log("Load chart data error:", e);
+      if (onLoad) onLoad();
+    });
 }
 
 mergeIndicators();
-const chartManager = new ChartManager("charts-grid", loadChartData);
+const chartManager = new ChartManager("charts-grid", loadChartData, saveState);
 const wsClient = new WSClient();
 const layoutManager = new LayoutManager(document.getElementById("charts-grid"));
 
@@ -546,16 +550,16 @@ function restoreState(state) {
             });
           }
 
-          loadChartData(id, chartCfg.symbol, chartCfg.timeframe, chartCfg.source, chartCfg.chartType);
-
-          if (chartCfg.horizontalLines && chartCfg.horizontalLines.length > 0) {
-            setTimeout(() => {
+          const restoreLines = () => {
+            if (chartCfg.horizontalLines && chartCfg.horizontalLines.length > 0) {
               chartCfg.horizontalLines.forEach(price => {
                 chartManager.addHorizontalLine(id, price);
               });
               chartManager.restoreAlertColors();
-            }, 300);
-          }
+            }
+          };
+
+          loadChartData(id, chartCfg.symbol, chartCfg.timeframe, chartCfg.source, chartCfg.chartType, restoreLines);
         }, index * 300);
       });
       layoutManager.applyLayout();
