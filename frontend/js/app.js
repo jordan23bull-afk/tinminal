@@ -2,7 +2,7 @@ import { ChartManager, addSymbolToList, removeSymbolFromAll, refreshAllSymbolDro
 import { WSClient } from "./ws-client.js";
 import { LayoutManager } from "./layout-manager.js";
 import { generateId, log } from "./utils.js";
-import { calcIndicator, mergeIndicators } from "./indicators.js";
+import { calcIndicator, mergeIndicators, loadCustomIndicators } from "./indicators.js";
 
 let selectedTimeframe = "1h";
 let isLoading = false;
@@ -548,16 +548,18 @@ function restoreState(state) {
       symbol: chartCfg.symbol,
       source: chartCfg.source,
       timeframe: chartCfg.timeframe,
-      chartType: chartCfg.chartType
+      chartType: chartCfg.chartType,
+      _activeIndicators: chartCfg.indicators || []
     });
 
     const chartObj = chartManager.charts.get(id);
     if (chartObj && chartCfg.indicators && chartCfg.indicators.length > 0) {
       chartCfg.indicators.forEach(indId => {
-        const color = chartManager.indicatorColors[indId] || "#787B86";
+        const customInd = loadCustomIndicators().find(c => c.id === indId);
+        const color = (customInd && customInd.extra && customInd.extra.color) || chartManager.indicatorColors[indId] || "#787B86";
+        const lineWidth = (customInd && customInd.extra && customInd.extra.lineWidth) || 2;
         const series = chartObj.chart.addLineSeries({
-          color,
-          lineWidth: 2,
+          color, lineWidth,
           priceFormat: { type: "price", precision: 2, minMove: 0.01 }
         });
         chartObj.indicators[indId] = series;
