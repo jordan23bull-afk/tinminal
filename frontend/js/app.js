@@ -469,6 +469,12 @@ layoutTrigger.addEventListener("click", (e) => {
   }
 });
 
+const SYNC_KEYS = ["symbol", "timeframe", "crosshair", "time", "dateRange"];
+document.querySelectorAll(".layout-sync-item input[type=checkbox]").forEach((cb, i) => {
+  const key = SYNC_KEYS[i];
+  if (key) cb.addEventListener("change", () => { chartManager.sync[key] = cb.checked; });
+});
+
 document.addEventListener("click", (e) => {
   if (!layoutTrigger.contains(e.target) && !layoutDropdown.contains(e.target)) {
     layoutDropdown.classList.add("hidden");
@@ -620,3 +626,42 @@ loadSources().then(() => {
 });
 
 log("App initialized");
+
+async function updateWatchlistPrices() {
+  const items = document.querySelectorAll(".watchlist-item[data-symbol]");
+  const symbols = Array.from(items).map(el => el.dataset.symbol);
+  if (symbols.length === 0) return;
+  try {
+    const res = await fetch(`/api/prices?symbols=${symbols.join(",")}`);
+    const data = await res.json();
+    if (data.error) return;
+    items.forEach(el => {
+      const sym = el.dataset.symbol;
+      const info = data.prices[sym];
+      const priceEl = el.querySelector(".wl-price");
+      const changeEl = el.querySelector(".wl-change");
+      if (!info) {
+        if (priceEl) priceEl.textContent = "—";
+        if (changeEl) { changeEl.textContent = "—"; changeEl.className = "wl-change"; }
+        return;
+      }
+      const priceStr = info.price >= 1000
+        ? info.price.toLocaleString("ru-RU", { maximumFractionDigits: 0 })
+        : info.price.toFixed(2);
+      if (priceEl) priceEl.textContent = priceStr;
+      if (changeEl) {
+        if (info.changePct != null) {
+          const pct = info.changePct.toFixed(2);
+          changeEl.textContent = (info.changePct >= 0 ? "+" : "") + pct + "%";
+          changeEl.className = "wl-change " + (info.changePct >= 0 ? "positive" : "negative");
+        } else {
+          changeEl.textContent = "—";
+          changeEl.className = "wl-change";
+        }
+      }
+    });
+  } catch {}
+}
+
+updateWatchlistPrices();
+setInterval(updateWatchlistPrices, 5000);

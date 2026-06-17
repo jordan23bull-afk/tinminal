@@ -9,7 +9,7 @@ export class ChartManager {
     this.onChartChange = onChartChange || (() => {});
     this.indicatorColors = {
       rsi: "#2962FF", macd: "#FF6D00", macd_signal: "#9C27B0",
-      macd_hist: "#787B86", sma: "#e91e63", poc: "#FF5722"
+      macd_hist: "#787B86", sma: "#e91e63", poc: "#FF5722", poc_day: "#2962FF"
     };
     this.showVolume = true;
     this._activeTool = "crosshair";
@@ -17,6 +17,8 @@ export class ChartManager {
     this._magnetOn = false;
     this.alerts = this._loadAlerts();
     this.ui = new ChartUI(this);
+    this.sync = { symbol: true, timeframe: true, crosshair: true, time: false, dateRange: false };
+    this._syncLock = false;
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
@@ -162,6 +164,46 @@ export class ChartManager {
     }
   }
 
+  syncCrosshair(sourceId, time) {
+    if (this._syncLock || !this.sync.crosshair) return;
+    this._syncLock = true;
+    for (const [id, chartObj] of this.charts) {
+      if (id === sourceId || !chartObj.chart) continue;
+      chartObj.chart.setCrosshairPosition(NaN, time, chartObj.mainSeries);
+    }
+    this._syncLock = false;
+  }
+
+  syncTimeRange(sourceId, range) {
+    if (this._syncLock || !this.sync.time) return;
+    this._syncLock = true;
+    for (const [id, chartObj] of this.charts) {
+      if (id === sourceId || !chartObj.chart) continue;
+      chartObj.chart.timeScale().setVisibleRange(range);
+    }
+    this._syncLock = false;
+  }
+
+  syncSymbolTimeframe(symbol, timeframe, source, excludeId) {
+    if (this._syncLock) return;
+    this._syncLock = true;
+    for (const [id, chartObj] of this.charts) {
+      if (id === excludeId) continue;
+      if (this.sync.symbol) chartObj.config.symbol = symbol;
+      if (this.sync.timeframe) chartObj.config.timeframe = timeframe;
+      if (source) chartObj.config.source = source;
+      const symBtn = chartObj.container.querySelector(".ch-symbol-btn");
+      if (symBtn && this.sync.symbol) symBtn.textContent = symbol;
+      if (this.sync.timeframe) {
+        chartObj.container.querySelectorAll(".ch-tf-btn").forEach(b => {
+          b.classList.toggle("active", b.dataset.tf === timeframe);
+        });
+      }
+      this.onChartChange(id, null, chartObj.config.symbol, chartObj.config.timeframe, chartObj.config.source, chartObj.chartType);
+    }
+    this._syncLock = false;
+  }
+
   createChart(id, config = {}) {
     if (this.charts.has(id)) {
       log(`Chart ${id} already exists`);
@@ -180,7 +222,7 @@ export class ChartManager {
     wrapper.appendChild(body);
     this.container.appendChild(wrapper);
 
-    wrapper.addEventListener("click", () => this.setActiveChart(id));
+    wrapper.addEventListener("mouseenter", () => this.setActiveChart(id));
 
     const chartObj = {
       chart: null, mainSeries: null, volumeSeries: null, chartType,
@@ -212,7 +254,12 @@ export class ChartManager {
         chartObj.crosshairTime = param.time;
         const data = param.seriesData.get(chartObj.mainSeries);
         if (data) chartObj.crosshairPrice = data.close || data.value || null;
+        this.syncCrosshair(id, param.time);
       }
+    });
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (range) this.syncTimeRange(id, chart.timeScale().getVisibleRange());
     });
 
     chartObj.volumeSeries = chart.addHistogramSeries({

@@ -90,6 +90,21 @@ def history():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/prices")
+def prices():
+    try:
+        symbols = request.args.get("symbols", "").split(",")
+        symbols = [s.strip().upper() for s in symbols if s.strip()]
+        if not symbols:
+            return jsonify({"prices": {}})
+        source = ModuleRegistry.get_data_source("moex")
+        result = source.get_prices(symbols)
+        return jsonify({"prices": result})
+    except Exception as e:
+        logger.error(f"Prices API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @socketio.on("connect")
 def on_connect():
     logger.info(f"Client connected: {request.sid}")

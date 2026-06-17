@@ -30,6 +30,12 @@ export const INDICATOR_TYPES = [
       { value: "cross", label: "До пересечения" }
     ]}
   ]},
+  { id: "poc_day", label: "POC дня", params: [
+    { key: "bins", label: "Уровни", default: 50 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#2962FF" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
+  ]},
 ];
 
 export const INDICATORS = [];
@@ -59,6 +65,7 @@ export function mergeIndicators() {
     { id: "rsi", label: "RSI" },
     { id: "macd", label: "MACD" },
     { id: "sma", label: "SMA" },
+    { id: "poc_day", label: "POC дня" },
   ];
   INDICATORS.length = 0;
   builtins.forEach(b => {
@@ -247,6 +254,39 @@ export function calcIndicator(indId, candles) {
       });
     }
     return rawPoc.map((v, i) => ({ time: candles[i].time, value: v }));
+  }
+  if (indId === "poc_day" || (custom && custom.type === "poc_day")) {
+    const numBins = params.bins || 50;
+    const dayGroups = {};
+    candles.forEach((c, i) => {
+      const d = new Date(c.time * 1000).toISOString().slice(0, 10);
+      if (!dayGroups[d]) dayGroups[d] = [];
+      dayGroups[d].push({ candle: c, idx: i });
+    });
+    const dayPoc = {};
+    for (const [day, items] of Object.entries(dayGroups)) {
+      const minP = Math.min(...items.map(x => x.candle.low));
+      const maxP = Math.max(...items.map(x => x.candle.high));
+      if (maxP === minP) { dayPoc[day] = items[0].candle.close; continue; }
+      const binSize = (maxP - minP) / numBins;
+      const vol = new Array(numBins).fill(0);
+      for (const { candle: c } of items) {
+        const avg = (c.high + c.low + c.close) / 3;
+        let bin = Math.floor((avg - minP) / binSize);
+        if (bin >= numBins) bin = numBins - 1;
+        if (bin < 0) bin = 0;
+        vol[bin] += c.volume;
+      }
+      let maxVol = 0, pocBin = 0;
+      for (let b = 0; b < numBins; b++) {
+        if (vol[b] > maxVol) { maxVol = vol[b]; pocBin = b; }
+      }
+      dayPoc[day] = minP + (pocBin + 0.5) * binSize;
+    }
+    return candles.map((c, i) => {
+      const d = new Date(c.time * 1000).toISOString().slice(0, 10);
+      return { time: c.time, value: dayPoc[d] };
+    });
   }
   return null;
 }

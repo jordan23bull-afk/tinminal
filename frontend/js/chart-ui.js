@@ -195,6 +195,7 @@ export class ChartUI {
           symbolDropdown.classList.add("hidden");
           this.m._updateChartConfig(id, { symbol: ticker, source: "moex" });
           this.m._reloadChart(id);
+          this.m.syncSymbolTimeframe(ticker, chartObj.config.timeframe, "moex", id);
         }
       }
     });
@@ -207,6 +208,7 @@ export class ChartUI {
         symbolDropdown.classList.add("hidden");
         this.m._updateChartConfig(id, { symbol: ticker, source });
         this.m._reloadChart(id);
+        this.m.syncSymbolTimeframe(ticker, chartObj.config.timeframe, source, id);
       });
     });
 
@@ -222,6 +224,7 @@ export class ChartUI {
         btn.classList.add("active");
         this.m._updateChartConfig(id, { timeframe: t.tf });
         this.m._reloadChart(id);
+        this.m.syncSymbolTimeframe(chartObj.config.symbol, t.tf, chartObj.config.source, id);
       });
       tfContainer.appendChild(btn);
     });

@@ -207,6 +207,30 @@ class MoexSource(IDataSource):
         threading.Thread(target=stream, daemon=True).start()
         return True
 
+    def get_prices(self, symbols):
+        tickers = [self._resolve_ticker(s) for s in symbols]
+        url = (
+            f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/"
+            f"securities.json?iss.meta=off&iss.json=extended"
+            f"&securities={','.join(tickers)}"
+        )
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        md_list = data[1].get("marketdata", [])
+        result = {}
+        for row in md_list:
+            ticker = row.get("SECID")
+            price = row.get("LAST")
+            if not ticker or price is None:
+                continue
+            result[ticker] = {
+                "price": float(price),
+                "change": float(row["LASTCHANGE"]) if row.get("LASTCHANGE") is not None else None,
+                "changePct": float(row["LASTTOPREVPRICE"]) if row.get("LASTTOPREVPRICE") is not None else None,
+            }
+        return result
+
     def unsubscribe_realtime(self, symbol, timeframe):
         key = (symbol, timeframe)
         event = self._stop_events.pop(key, None)
