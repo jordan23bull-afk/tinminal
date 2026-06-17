@@ -112,117 +112,12 @@
           <span class="watchlist-title">Список</span>
           <button class="icon-btn-sm">+</button>
         </div>
-        <div class="watchlist-tabs">
-          <button class="wl-tab active">Инструм.</button>
-          <button class="wl-tab">Иzm. е</button>
-          <button class="wl-tab">Объём</button>
+        <div class="wl-columns-header" id="wl-columns-header">
+          <div class="wl-col wl-col-symbol" data-col="symbol">Инструмент<div class="wl-col-resize" data-col="symbol"></div></div>
+          <div class="wl-col wl-col-change" data-col="change">Изм. в %<div class="wl-col-resize" data-col="change"></div></div>
+          <div class="wl-col wl-col-volume" data-col="volume">Цена<div class="wl-col-resize" data-col="volume"></div></div>
         </div>
-        <div class="watchlist-items">
-          <div class="wl-section-header">MOEX</div>
-          <div class="watchlist-item" data-symbol="SBER" data-source="moex">
-            <div class="wl-icon moex">С</div>
-            <div class="wl-info">
-              <span class="wl-symbol">SBER</span>
-              <span class="wl-price">280</span>
-            </div>
-            <span class="wl-change positive">+1.2%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="GAZP" data-source="moex">
-            <div class="wl-icon moex">Г</div>
-            <div class="wl-info">
-              <span class="wl-symbol">GAZP</span>
-              <span class="wl-price">152</span>
-            </div>
-            <span class="wl-change negative">-0.8%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="LKOH" data-source="moex">
-            <div class="wl-icon moex">Л</div>
-            <div class="wl-info">
-              <span class="wl-symbol">LKOH</span>
-              <span class="wl-price">7 450</span>
-            </div>
-            <span class="wl-change positive">+0.5%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="YDEX" data-source="moex">
-            <div class="wl-icon moex">Я</div>
-            <div class="wl-info">
-              <span class="wl-symbol">YDEX</span>
-              <span class="wl-price">3 820</span>
-            </div>
-            <span class="wl-change positive">+2.1%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="GMKN" data-source="moex">
-            <div class="wl-icon moex">Н</div>
-            <div class="wl-info">
-              <span class="wl-symbol">GMKN</span>
-              <span class="wl-price">14 200</span>
-            </div>
-            <span class="wl-change negative">-1.3%</span>
-          </div>
-          <div class="watchlist-item" data-symbol="ROSN" data-source="moex">
-            <div class="wl-icon moex">Р</div>
-            <div class="wl-info">
-              <span class="wl-symbol">ROSN</span>
-              <span class="wl-price">—</span>
-            </div>
-            <span class="wl-change">—</span>
-          </div>
-          <div class="watchlist-item" data-symbol="SNGS" data-source="moex">
-            <div class="wl-icon moex">С</div>
-            <div class="wl-info">
-              <span class="wl-symbol">SNGS</span>
-              <span class="wl-price">—</span>
-            </div>
-            <span class="wl-change">—</span>
-          </div>
-          <div class="watchlist-item" data-symbol="VTBR" data-source="moex">
-            <div class="wl-icon moex">В</div>
-            <div class="wl-info">
-              <span class="wl-symbol">VTBR</span>
-              <span class="wl-price">—</span>
-            </div>
-            <span class="wl-change">—</span>
-          </div>
-          <div class="watchlist-item" data-symbol="WUSH" data-source="moex">
-            <div class="wl-icon moex">W</div>
-            <div class="wl-info">
-              <span class="wl-symbol">WUSH</span>
-              <span class="wl-price">—</span>
-            </div>
-            <span class="wl-change">—</span>
-          </div>
-          <div class="watchlist-item" data-symbol="PHOR" data-source="moex">
-            <div class="wl-icon moex">Ф</div>
-            <div class="wl-info">
-              <span class="wl-symbol">PHOR</span>
-              <span class="wl-price">—</span>
-            </div>
-            <span class="wl-change">—</span>
-          </div>
-          <div class="watchlist-item" data-symbol="SBERP" data-source="moex">
-            <div class="wl-icon moex">С</div>
-            <div class="wl-info">
-              <span class="wl-symbol">SBERP</span>
-              <span class="wl-price">—</span>
-            </div>
-            <span class="wl-change">—</span>
-          </div>
-          <div class="watchlist-item" data-symbol="SMLT" data-source="moex">
-            <div class="wl-icon moex">S</div>
-            <div class="wl-info">
-              <span class="wl-symbol">SMLT</span>
-              <span class="wl-price">—</span>
-            </div>
-            <span class="wl-change">—</span>
-          </div>
-          <div class="watchlist-item" data-symbol="TATN" data-source="moex">
-            <div class="wl-icon moex">T</div>
-            <div class="wl-info">
-              <span class="wl-symbol">TATN</span>
-              <span class="wl-price">—</span>
-            </div>
-            <span class="wl-change">—</span>
-          </div>
+        <div class="watchlist-items" id="watchlist-items">
         </div>
 
         <!-- Price Scale Info -->

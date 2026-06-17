@@ -264,9 +264,12 @@ export class ChartManager {
 
     chartObj.volumeSeries = chart.addHistogramSeries({
       color: "#26a69a", priceFormat: { type: "volume" },
-      priceScaleId: "volume", scaleMargins: { top: 0.8, bottom: 0 }
+      priceScaleId: "volume"
     });
-    chart.priceScale("volume").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } });
+    chart.priceScale("volume").applyOptions({
+      scaleMargins: { top: 0.8, bottom: 0 },
+      drawTicks: false
+    });
 
     chartObj.chart = chart;
 

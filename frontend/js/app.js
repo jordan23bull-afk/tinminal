@@ -43,7 +43,59 @@ wsClient.on("candleUpdate", (symbol, timeframe, candle) => {
 
 wsClient.connect();
 
-// Watchlist items
+// Watchlist
+const WATCHLIST_KEY = "trading-dashboard-watchlist";
+const DEFAULT_WATCHLIST = [
+  { ticker: "SBER", source: "moex" },
+  { ticker: "GAZP", source: "moex" },
+  { ticker: "LKOH", source: "moex" },
+  { ticker: "YDEX", source: "moex" },
+  { ticker: "GMKN", source: "moex" },
+  { ticker: "ROSN", source: "moex" },
+  { ticker: "SNGS", source: "moex" },
+  { ticker: "VTBR", source: "moex" },
+  { ticker: "WUSH", source: "moex" },
+  { ticker: "PHOR", source: "moex" },
+  { ticker: "SBERP", source: "moex" },
+  { ticker: "SMLT", source: "moex" },
+  { ticker: "TATN", source: "moex" },
+];
+
+function loadWatchlist() {
+  try {
+    const raw = localStorage.getItem(WATCHLIST_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [...DEFAULT_WATCHLIST];
+}
+
+function saveWatchlist(list) {
+  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+}
+
+function createWatchlistItemEl(ticker, source) {
+  const div = document.createElement("div");
+  div.className = "watchlist-item";
+  div.dataset.symbol = ticker;
+  div.dataset.source = source;
+  div.innerHTML = `<div class="wl-col wl-col-symbol"><div class="wl-icon moex">${ticker.charAt(0)}</div><span class="wl-symbol">${ticker}</span></div><div class="wl-col wl-col-change"><span class="wl-change">—</span></div><div class="wl-col wl-col-volume"><span class="wl-price">—</span></div>`;
+  setupWatchlistItem(div);
+  return div;
+}
+
+function renderWatchlist() {
+  const container = document.getElementById("watchlist-items");
+  container.innerHTML = "";
+  const list = loadWatchlist();
+  list.forEach(({ ticker, source }) => {
+    addSymbolToList(ticker, ticker);
+    container.appendChild(createWatchlistItemEl(ticker, source || "moex"));
+  });
+  refreshAllSymbolDropdowns();
+  applyColumnWidths(loadColumnWidths());
+  updateWatchlistPrices();
+}
+
 function setupWatchlistItem(item) {
   item.addEventListener("click", (e) => {
     if (e.target.closest(".wl-delete")) return;
@@ -74,61 +126,15 @@ function setupWatchlistItem(item) {
       e.stopPropagation();
       const ticker = item.dataset.symbol;
       item.remove();
+      const list = loadWatchlist().filter(t => t.ticker !== ticker);
+      saveWatchlist(list);
       removeSymbolFromAll(ticker);
     });
     item.appendChild(del);
   }
 }
 
-const deletedTickers = getDeletedTickers();
-deletedTickers.forEach(t => removeSymbolFromAll(t));
-document.querySelectorAll(".watchlist-item").forEach(item => {
-  if (deletedTickers.includes(item.dataset.symbol)) {
-    item.remove();
-    return;
-  }
-  setupWatchlistItem(item);
-});
-
-// Custom tickers
-const CUSTOM_TICKERS_KEY = "trading-dashboard-custom-tickers";
-
-function loadCustomTickers() {
-  try {
-    const raw = localStorage.getItem(CUSTOM_TICKERS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function saveCustomTickers(tickers) {
-  localStorage.setItem(CUSTOM_TICKERS_KEY, JSON.stringify(tickers));
-}
-
-function addCustomTicker(ticker, name) {
-  ticker = ticker.toUpperCase().trim();
-  if (!ticker) return;
-  name = name || ticker;
-  addSymbolToList(ticker, name);
-  refreshAllSymbolDropdowns();
-
-  const wlItems = document.querySelector(".watchlist-items");
-  const div = document.createElement("div");
-  div.className = "watchlist-item";
-  div.dataset.symbol = ticker;
-  div.dataset.source = "moex";
-  div.innerHTML = `<div class="wl-icon moex">${name.charAt(0)}</div><div class="wl-info"><span class="wl-symbol">${ticker}</span><span class="wl-price">—</span></div><span class="wl-change">—</span>`;
-  setupWatchlistItem(div);
-  wlItems.appendChild(div);
-
-  const tickers = loadCustomTickers();
-  if (!tickers.find(t => t.ticker === ticker)) {
-    tickers.push({ ticker, name });
-    saveCustomTickers(tickers);
-  }
-}
-
-// Restore custom tickers from localStorage
-loadCustomTickers().forEach(t => addCustomTicker(t.ticker, t.name));
+renderWatchlist();
 
 // "+" button in watchlist
 const addTickerBtn = document.querySelector(".watchlist-header .icon-btn-sm");
@@ -138,7 +144,11 @@ if (addTickerBtn) {
     if (!input) return;
     const ticker = input.toUpperCase().trim();
     if (!ticker) return;
-    addCustomTicker(ticker, ticker);
+    const list = loadWatchlist();
+    if (list.some(t => t.ticker === ticker)) return;
+    list.push({ ticker, source: "moex" });
+    saveWatchlist(list);
+    renderWatchlist();
   });
 }
 
@@ -165,6 +175,96 @@ if (sidebarResize && sidebarRight) {
     document.addEventListener("mouseup", onUp);
   });
 }
+
+// Watchlist column resize
+const WL_COLS_KEY = "trading-dashboard-wl-columns";
+
+function loadColumnWidths() {
+  try {
+    const raw = localStorage.getItem(WL_COLS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function saveColumnWidths(widths) {
+  localStorage.setItem(WL_COLS_KEY, JSON.stringify(widths));
+}
+
+function applyColumnWidths(widths) {
+  if (!widths) return;
+  const header = document.getElementById("wl-columns-header");
+  const items = document.querySelectorAll(".watchlist-items .watchlist-item");
+  for (const [colName, w] of Object.entries(widths)) {
+    const colEl = header?.querySelector(`.wl-col-${colName}`);
+    if (colEl) { colEl.style.width = w + "px"; colEl.style.flex = "0 0 " + w + "px"; }
+    items.forEach(item => {
+      const col = item.querySelector(`.wl-col-${colName}`);
+      if (col) { col.style.width = w + "px"; col.style.flex = "0 0 " + w + "px"; }
+    });
+  }
+}
+
+function getColumnWidths() {
+  const header = document.getElementById("wl-columns-header");
+  if (!header) return {};
+  const widths = {};
+  header.querySelectorAll(".wl-col").forEach(col => {
+    const name = [...col.classList].find(c => c.startsWith("wl-col-") && c !== "wl-col-resize")?.replace("wl-col-", "");
+    if (name) widths[name] = col.offsetWidth;
+  });
+  return widths;
+}
+
+function setupColumnResize() {
+  const header = document.getElementById("wl-columns-header");
+  if (!header) return;
+
+  applyColumnWidths(loadColumnWidths());
+
+  const resizeHandles = header.querySelectorAll(".wl-col-resize");
+
+  resizeHandles.forEach(handle => {
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const colName = handle.dataset.col;
+      const colEl = header.querySelector(`.wl-col-${colName}`);
+      const startX = e.clientX;
+      const startW = colEl.offsetWidth;
+
+      const headerCols = header.querySelectorAll(".wl-col");
+      const items = document.querySelectorAll(".watchlist-items .watchlist-item");
+
+      const onMove = (e) => {
+        const diff = e.clientX - startX;
+        const newW = Math.max(40, startW + diff);
+        colEl.style.width = newW + "px";
+        colEl.style.flex = "0 0 " + newW + "px";
+        items.forEach(item => {
+          const col = item.querySelector(`.wl-col-${colName}`);
+          if (col) {
+            col.style.width = newW + "px";
+            col.style.flex = "0 0 " + newW + "px";
+          }
+        });
+      };
+
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        saveColumnWidths(getColumnWidths());
+      };
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
+}
+setupColumnResize();
 
 // Update clock
 function updateClock() {
@@ -410,7 +510,8 @@ function selectLayout(count, optionIndex) {
   for (const [id, chartObj] of chartManager.charts) {
     const symbol = chartObj.config.symbol;
     if (symbol && chartObj._horizontalLines.length > 0) {
-      savedLinesPerSymbol[symbol] = chartObj._horizontalLines.map(l => l.options().price);
+      if (!savedLinesPerSymbol[symbol]) savedLinesPerSymbol[symbol] = [];
+      savedLinesPerSymbol[symbol].push(...chartObj._horizontalLines.map(l => l.options().price));
     }
   }
   const savedAlerts = [...chartManager.alerts];
@@ -507,6 +608,7 @@ function saveState() {
     symbol: symbolInput.value,
     source: sourceSelect.value,
     timeframe: selectedTimeframe,
+    sync: { ...chartManager.sync },
     charts
   };
   try {
@@ -537,6 +639,18 @@ function restoreState(state) {
 
   symbolInput.value = state.symbol || "SBER";
   sourceSelect.value = state.source || "moex";
+
+  if (state.sync) {
+    Object.assign(chartManager.sync, state.sync);
+    document.querySelectorAll(".layout-sync-item input[type=checkbox]").forEach((cb, i) => {
+      const key = SYNC_KEYS[i];
+      if (key && key in state.sync) cb.checked = state.sync[key];
+    });
+  }
+
+  document.querySelectorAll("[data-btf]").forEach(b => {
+    b.classList.toggle("active", b.dataset.btf === selectedTimeframe);
+  });
 
   layoutManager.setLayoutByCount(currentLayoutCount, currentLayoutOption);
   layoutTriggerText.textContent = currentLayoutCount;
