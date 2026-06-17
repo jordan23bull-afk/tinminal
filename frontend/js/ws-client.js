@@ -6,8 +6,8 @@ export class WSClient {
     this.socket = null;
     this.subscriptions = new Map();
     this.handlers = {
-      candleUpdate: null,
-      statusChange: null
+      candleUpdate: [],
+      statusChange: []
     };
     this.connected = false;
   }
@@ -78,13 +78,13 @@ export class WSClient {
   }
 
   on(event, callback) {
-    this.handlers[event] = callback;
+    if (!this.handlers[event]) this.handlers[event] = [];
+    this.handlers[event].push(callback);
   }
 
   _emit(event, ...args) {
-    if (this.handlers[event]) {
-      this.handlers[event](...args);
-    }
+    const list = this.handlers[event];
+    if (list) list.forEach(cb => cb(...args));
   }
 
   _resubscribeAll() {

@@ -18,7 +18,6 @@ export class ChartManager {
     this.alerts = this._loadAlerts();
     this.ui = new ChartUI(this);
     this.sync = { symbol: true, timeframe: true, crosshair: true, time: false, dateRange: false };
-    this._syncLock = false;
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
@@ -34,43 +33,69 @@ export class ChartManager {
   }
 
   addAlert(chartId, price) {
-    const chartObj = this.charts.get(chartId);
-    const symbol = chartObj ? chartObj.config.symbol : "???";
-    this.alerts.push({ chartId, symbol, price, id: Date.now() });
+    const sourceObj = this.charts.get(chartId);
+    const symbol = sourceObj ? sourceObj.config.symbol : "???";
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol !== symbol) continue;
+      const exists = this.alerts.some(a => a.chartId === id && Math.abs(a.price - price) < 0.5);
+      if (!exists) {
+        this.alerts.push({ chartId: id, symbol, price, id: Date.now() });
+      }
+    }
     this._saveAlerts();
     this._updateLineColor(chartId, price, "#FF9800");
     log(`Alert added: ${symbol} @ ${price}`);
   }
 
   removeAlert(chartId, price) {
-    this.alerts = this.alerts.filter(a => !(a.chartId === chartId && Math.abs(a.price - price) < 0.5));
+    const sourceObj = this.charts.get(chartId);
+    const symbol = sourceObj ? sourceObj.config.symbol : null;
+    this.alerts = this.alerts.filter(a => {
+      if (Math.abs(a.price - price) >= 0.5) return true;
+      if (symbol && a.symbol === symbol) return false;
+      if (a.chartId === chartId) return false;
+      return true;
+    });
     this._saveAlerts();
     this._updateLineColor(chartId, price, "#2196F3");
   }
 
   _updateLineColor(chartId, price, color) {
-    const chartObj = this.charts.get(chartId);
-    if (!chartObj || !chartObj.mainSeries) return;
-    const line = chartObj._horizontalLines.find(l => {
+    const sourceObj = this.charts.get(chartId);
+    if (!sourceObj) return;
+    const symbol = sourceObj.config.symbol;
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
+      const line = this._findLineByPrice(chartObj, price);
+      if (!line) continue;
+      chartObj.mainSeries.removePriceLine(line);
+      const newLine = chartObj.mainSeries.createPriceLine({
+        price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: ""
+      });
+      chartObj._horizontalLines = chartObj._horizontalLines.map(l => l === line ? newLine : l);
+    }
+  }
+
+  _findLineByPrice(chartObj, price) {
+    return chartObj._horizontalLines.find(l => {
       const p = l.options().price;
       return p != null && Math.abs(p - price) < 0.5;
-    });
-    if (!line) return;
-    chartObj.mainSeries.removePriceLine(line);
-    const newLine = chartObj.mainSeries.createPriceLine({
-      price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: ""
-    });
-    chartObj._horizontalLines = chartObj._horizontalLines.map(l => l === line ? newLine : l);
+    }) || null;
   }
 
   checkAlerts(candle) {
+    const notified = new Set();
     for (const alert of this.alerts) {
       if (alert.triggered) continue;
       const chartObj = this.charts.get(alert.chartId);
       if (!chartObj || chartObj.config.symbol !== alert.symbol) continue;
       if (candle.high >= alert.price && candle.low <= alert.price) {
         alert.triggered = true;
-        this._sendNotification(alert, candle);
+        const key = `${alert.symbol}_${alert.price}`;
+        if (!notified.has(key)) {
+          this._sendNotification(alert, candle);
+          notified.add(key);
+        }
         this._updateLineColor(alert.chartId, alert.price, "#2196F3");
       }
     }
@@ -150,13 +175,6 @@ export class ChartManager {
     }
   }
 
-  _reloadChart(id) {
-    const chartObj = this.charts.get(id);
-    if (!chartObj) return;
-    const cfg = chartObj.config;
-    this.onChartChange(id, null, cfg.symbol, cfg.timeframe, cfg.source, cfg.chartType);
-  }
-
   setActiveChart(id) {
     this.activeChartId = id;
     for (const [cid, obj] of this.charts) {
@@ -164,44 +182,45 @@ export class ChartManager {
     }
   }
 
+  changeSymbol(symbol, source, sourceId) {
+    source = source || "moex";
+    for (const [id, chartObj] of this.charts) {
+      const update = id === sourceId || this.sync.symbol;
+      if (!update) continue;
+      chartObj.config.symbol = symbol;
+      chartObj.config.source = source;
+      const btn = chartObj.container.querySelector(".ch-symbol-btn");
+      if (btn) btn.textContent = symbol;
+      this.onChartChange(id, null, symbol, chartObj.config.timeframe, source, chartObj.chartType);
+    }
+  }
+
+  changeTimeframe(timeframe, sourceId) {
+    for (const [id, chartObj] of this.charts) {
+      const update = id === sourceId || this.sync.timeframe;
+      if (!update) continue;
+      chartObj.config.timeframe = timeframe;
+      chartObj.container.querySelectorAll(".ch-tf-btn").forEach(b => {
+        b.classList.toggle("active", b.dataset.tf === timeframe);
+      });
+      this.onChartChange(id, null, chartObj.config.symbol, timeframe, chartObj.config.source, chartObj.chartType);
+    }
+  }
+
   syncCrosshair(sourceId, time) {
-    if (this._syncLock || !this.sync.crosshair) return;
-    this._syncLock = true;
+    if (!this.sync.crosshair) return;
     for (const [id, chartObj] of this.charts) {
       if (id === sourceId || !chartObj.chart) continue;
       chartObj.chart.setCrosshairPosition(NaN, time, chartObj.mainSeries);
     }
-    this._syncLock = false;
   }
 
   syncTimeRange(sourceId, range) {
-    if (this._syncLock || !this.sync.time) return;
-    this._syncLock = true;
+    if (!this.sync.time) return;
     for (const [id, chartObj] of this.charts) {
       if (id === sourceId || !chartObj.chart) continue;
       chartObj.chart.timeScale().setVisibleRange(range);
     }
-    this._syncLock = false;
-  }
-
-  syncSymbolTimeframe(symbol, timeframe, source, excludeId) {
-    if (this._syncLock) return;
-    this._syncLock = true;
-    for (const [id, chartObj] of this.charts) {
-      if (id === excludeId) continue;
-      if (this.sync.symbol) chartObj.config.symbol = symbol;
-      if (this.sync.timeframe) chartObj.config.timeframe = timeframe;
-      if (source) chartObj.config.source = source;
-      const symBtn = chartObj.container.querySelector(".ch-symbol-btn");
-      if (symBtn && this.sync.symbol) symBtn.textContent = symbol;
-      if (this.sync.timeframe) {
-        chartObj.container.querySelectorAll(".ch-tf-btn").forEach(b => {
-          b.classList.toggle("active", b.dataset.tf === timeframe);
-        });
-      }
-      this.onChartChange(id, null, chartObj.config.symbol, chartObj.config.timeframe, chartObj.config.source, chartObj.chartType);
-    }
-    this._syncLock = false;
   }
 
   createChart(id, config = {}) {
@@ -351,10 +370,8 @@ export class ChartManager {
     }
 
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        chartObj.chart.timeScale().fitContent();
-        chartObj.chart.timeScale().scrollToPosition(5, false);
-      });
+      chartObj.chart.timeScale().fitContent();
+      chartObj.chart.timeScale().scrollToPosition(5, false);
     });
   }
 
@@ -411,6 +428,7 @@ export class ChartManager {
   removeChart(id) {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
+    this.ui.unbindChartInteractions(chartObj);
     if (chartObj._resizeObserver) chartObj._resizeObserver.disconnect();
     if (chartObj._resizeTimer) clearTimeout(chartObj._resizeTimer);
     this.removeAllHorizontalLines(id);
@@ -421,13 +439,22 @@ export class ChartManager {
   }
 
   addHorizontalLine(chartId, price) {
-    const chartObj = this.charts.get(chartId);
-    if (!chartObj || !chartObj.mainSeries) return;
-    const line = chartObj.mainSeries.createPriceLine({
-      price, color: "#2196F3", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: ""
-    });
-    chartObj._horizontalLines.push(line);
-    log(`Horizontal line added at ${price}`);
+    const sourceObj = this.charts.get(chartId);
+    if (!sourceObj || !sourceObj.mainSeries) return;
+    const symbol = sourceObj.config.symbol;
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
+      const exists = chartObj._horizontalLines.some(l => {
+        const p = l.options().price;
+        return p != null && Math.abs(p - price) < 0.5;
+      });
+      if (exists) continue;
+      const line = chartObj.mainSeries.createPriceLine({
+        price, color: "#2196F3", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: ""
+      });
+      chartObj._horizontalLines.push(line);
+    }
+    log(`Horizontal line added at ${price} for ${symbol}`);
   }
 
   removeAllHorizontalLines(chartId) {
@@ -435,6 +462,18 @@ export class ChartManager {
     if (!chartObj) return;
     for (const line of chartObj._horizontalLines) chartObj.mainSeries.removePriceLine(line);
     chartObj._horizontalLines = [];
+  }
+
+  _removeLineFromAll(price, symbol) {
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
+      const line = this._findLineByPrice(chartObj, price);
+      if (!line) continue;
+      chartObj.mainSeries.removePriceLine(line);
+      chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== line);
+    }
+    this.alerts = this.alerts.filter(a => !(a.symbol === symbol && Math.abs(a.price - price) < 0.5));
+    this._saveAlerts();
   }
 
   getAllChartIds() { return Array.from(this.charts.keys()); }

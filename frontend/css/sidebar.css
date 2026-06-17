@@ -221,14 +221,6 @@
   flex-shrink: 0;
 }
 
-.wl-icon.btc { background: #f7931a; }
-.wl-icon.eth { background: #627eea; }
-.wl-icon.sol { background: #9945ff; }
-.wl-icon.bnb { background: #f3ba2f; }
-.wl-icon.xrp { background: #23292f; }
-.wl-icon.doge { background: #c2a633; }
-.wl-icon.ada { background: #0033ad; }
-.wl-icon.avax { background: #e84142; }
 .wl-icon.moex { background: #1a73e8; }
 
 .wl-section-header {

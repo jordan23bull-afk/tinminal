@@ -78,6 +78,27 @@ export function mergeIndicators() {
   });
 }
 
+function calcPocBins(slice, numBins) {
+  if (slice.length < 2) return null;
+  const minP = Math.min(...slice.map(x => x.low));
+  const maxP = Math.max(...slice.map(x => x.high));
+  if (maxP === minP) return null;
+  const binSize = (maxP - minP) / numBins;
+  const volAtPrice = new Array(numBins).fill(0);
+  for (const candle of slice) {
+    const avgPrice = (candle.high + candle.low + candle.close) / 3;
+    let bin = Math.floor((avgPrice - minP) / binSize);
+    if (bin >= numBins) bin = numBins - 1;
+    if (bin < 0) bin = 0;
+    volAtPrice[bin] += candle.volume;
+  }
+  let maxVol = 0, pocBin = 0;
+  for (let b = 0; b < numBins; b++) {
+    if (volAtPrice[b] > maxVol) { maxVol = volAtPrice[b]; pocBin = b; }
+  }
+  return minP + (pocBin + 0.5) * binSize;
+}
+
 export function calcIndicator(indId, candles) {
   const custom = loadCustomIndicators().find(c => c.id === indId);
   const params = custom ? custom.params : {};
@@ -187,27 +208,6 @@ export function calcIndicator(indId, candles) {
     const numBins = params.bins || 30;
     const extendMode = (custom && custom.extra && custom.extra.extendMode) || "day";
 
-    const calcPocForSlice = (slice) => {
-      if (slice.length < 2) return null;
-      const minP = Math.min(...slice.map(x => x.low));
-      const maxP = Math.max(...slice.map(x => x.high));
-      if (maxP === minP) return null;
-      const binSize = (maxP - minP) / numBins;
-      const volAtPrice = new Array(numBins).fill(0);
-      for (const candle of slice) {
-        const avgPrice = (candle.high + candle.low + candle.close) / 3;
-        let bin = Math.floor((avgPrice - minP) / binSize);
-        if (bin >= numBins) bin = numBins - 1;
-        if (bin < 0) bin = 0;
-        volAtPrice[bin] += candle.volume;
-      }
-      let maxVol = 0, pocBin = 0;
-      for (let b = 0; b < numBins; b++) {
-        if (volAtPrice[b] > maxVol) { maxVol = volAtPrice[b]; pocBin = b; }
-      }
-      return minP + (pocBin + 0.5) * binSize;
-    };
-
     if (p === 0) {
       const dayStart = {};
       candles.forEach((c, i) => {
@@ -220,7 +220,7 @@ export function calcIndicator(indId, candles) {
         const startIdx = dayStart[days[di]];
         const endIdx = di < days.length - 1 ? dayStart[days[di + 1]] : candles.length;
         const daySlice = candles.slice(startIdx, endIdx);
-        const poc = calcPocForSlice(daySlice);
+        const poc = calcPocBins(daySlice, numBins);
         for (let i = startIdx; i < endIdx; i++) {
           result.push({ time: candles[i].time, value: poc !== null ? poc : candles[i].close });
         }
@@ -239,7 +239,7 @@ export function calcIndicator(indId, candles) {
     const rawPoc = candles.map((c, i) => {
       const start = Math.max(0, i - p + 1);
       const slice = candles.slice(start, i + 1);
-      const poc = calcPocForSlice(slice);
+      const poc = calcPocBins(slice, numBins);
       return poc !== null ? poc : c.close;
     });
     if (extendMode === "cross") {
@@ -261,29 +261,14 @@ export function calcIndicator(indId, candles) {
     candles.forEach((c, i) => {
       const d = new Date(c.time * 1000).toISOString().slice(0, 10);
       if (!dayGroups[d]) dayGroups[d] = [];
-      dayGroups[d].push({ candle: c, idx: i });
+      dayGroups[d].push(c);
     });
     const dayPoc = {};
     for (const [day, items] of Object.entries(dayGroups)) {
-      const minP = Math.min(...items.map(x => x.candle.low));
-      const maxP = Math.max(...items.map(x => x.candle.high));
-      if (maxP === minP) { dayPoc[day] = items[0].candle.close; continue; }
-      const binSize = (maxP - minP) / numBins;
-      const vol = new Array(numBins).fill(0);
-      for (const { candle: c } of items) {
-        const avg = (c.high + c.low + c.close) / 3;
-        let bin = Math.floor((avg - minP) / binSize);
-        if (bin >= numBins) bin = numBins - 1;
-        if (bin < 0) bin = 0;
-        vol[bin] += c.volume;
-      }
-      let maxVol = 0, pocBin = 0;
-      for (let b = 0; b < numBins; b++) {
-        if (vol[b] > maxVol) { maxVol = vol[b]; pocBin = b; }
-      }
-      dayPoc[day] = minP + (pocBin + 0.5) * binSize;
+      const poc = calcPocBins(items, numBins);
+      dayPoc[day] = poc !== null ? poc : items[0].close;
     }
-    return candles.map((c, i) => {
+    return candles.map((c) => {
       const d = new Date(c.time * 1000).toISOString().slice(0, 10);
       return { time: c.time, value: dayPoc[d] };
     });

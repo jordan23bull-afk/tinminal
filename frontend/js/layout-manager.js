@@ -40,17 +40,10 @@ export class LayoutManager {
     const layouts = LAYOUTS[count];
     if (!layouts || optionIndex >= layouts.length) return;
 
-    const layout = layouts[optionIndex];
-    this.currentLayout = layout;
+    this.currentLayout = layouts[optionIndex];
     this.currentOptionIndex = optionIndex;
 
     const children = Array.from(this.grid.children);
-
-    this.grid.style.gridTemplateColumns = '';
-    this.grid.style.gridTemplateRows = '';
-    this.grid.style.display = '';
-    this.grid.style.gap = '';
-
     children.forEach(child => {
       child.style.gridRow = '';
       child.style.gridColumn = '';
@@ -58,30 +51,7 @@ export class LayoutManager {
       child.style.height = '';
     });
 
-    if (count === 1) {
-      this.grid.style.display = 'block';
-      return;
-    }
-
-    this.grid.style.display = 'grid';
-    this.grid.style.gap = '2px';
-
-    this.grid.style.gridTemplateColumns = `repeat(${layout.cols}, 1fr)`;
-    this.grid.style.gridTemplateRows = `repeat(${layout.rows}, 1fr)`;
-
-    let cellIndex = 0;
-    const maxCells = Math.min(layout.cells.length, children.length);
-
-    for (let r = 0; r < layout.rows && cellIndex < maxCells; r++) {
-      let c = 0;
-      while (c < layout.cols && cellIndex < maxCells) {
-        const [rowSpan, colSpan] = layout.cells[cellIndex];
-        children[cellIndex].style.gridRow = `${r + 1} / span ${rowSpan}`;
-        children[cellIndex].style.gridColumn = `${c + 1} / span ${colSpan}`;
-        c += colSpan;
-        cellIndex++;
-      }
-    }
+    this.applyLayout();
   }
 
   applyLayout() {
@@ -91,6 +61,9 @@ export class LayoutManager {
 
     if (children.length === 1) {
       this.grid.style.display = 'block';
+      this.grid.style.gridTemplateColumns = '';
+      this.grid.style.gridTemplateRows = '';
+      this.grid.style.gap = '';
       children[0].style.gridRow = '';
       children[0].style.gridColumn = '';
       return;

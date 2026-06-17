@@ -33,9 +33,8 @@ wsClient.on("statusChange", (status) => {
 });
 
 wsClient.on("candleUpdate", (symbol, timeframe, candle) => {
-  for (const id of chartManager.getAllChartIds()) {
-    const chartObj = chartManager.charts.get(id);
-    if (chartObj && chartObj.config.symbol === symbol && chartObj.config.timeframe === timeframe) {
+  for (const [id, chartObj] of chartManager.charts) {
+    if (chartObj.config.symbol === symbol && chartObj.config.timeframe === timeframe) {
       chartManager.updateCandle(id, candle);
     }
   }
@@ -104,16 +103,7 @@ function setupWatchlistItem(item) {
     const symbol = item.dataset.symbol;
     const source = item.dataset.source || "moex";
     const activeId = chartManager.activeChartId;
-    if (activeId) {
-      const chartObj = chartManager.charts.get(activeId);
-      if (chartObj) {
-        chartObj.config.symbol = symbol;
-        chartObj.config.source = source;
-        const btn = chartObj.container.querySelector(".ch-symbol-btn");
-        if (btn) btn.textContent = symbol;
-        loadHistory(activeId, null, symbol, chartObj.config.timeframe, source, chartObj.chartType);
-      }
-    }
+    chartManager.changeSymbol(symbol, source, activeId);
     symbolInput.value = symbol;
     sourceSelect.value = source;
   });
@@ -776,7 +766,9 @@ async function updateWatchlistPrices() {
         }
       }
     });
-  } catch {}
+  } catch (e) {
+    log("Failed to update watchlist prices:", e);
+  }
 }
 
 updateWatchlistPrices();

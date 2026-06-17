@@ -49,19 +49,21 @@ function getDeletedTickers() {
   } catch { return []; }
 }
 
+function buildSymbolItemEl(s) {
+  const item = document.createElement("div");
+  item.className = "ch-symbol-item";
+  item.dataset.ticker = s.ticker;
+  item.dataset.source = s.source;
+  item.innerHTML = `<span class="ch-si-icon">${s.icon}</span><span class="ch-si-name">${s.name}</span><span class="ch-si-ticker">${s.ticker}</span>`;
+  return item;
+}
+
 function refreshAllSymbolDropdowns() {
   document.querySelectorAll(".ch-symbol-dropdown").forEach(dropdown => {
     const list = dropdown.querySelector(".ch-symbol-list");
     if (!list) return;
     list.innerHTML = "";
-    SYMBOLS.forEach(s => {
-      const item = document.createElement("div");
-      item.className = "ch-symbol-item";
-      item.dataset.ticker = s.ticker;
-      item.dataset.source = s.source;
-      item.innerHTML = `<span class="ch-si-icon">${s.icon}</span><span class="ch-si-name">${s.name}</span><span class="ch-si-ticker">${s.ticker}</span>`;
-      list.appendChild(item);
-    });
+    SYMBOLS.forEach(s => list.appendChild(buildSymbolItemEl(s)));
   });
 }
 
@@ -115,15 +117,7 @@ export class ChartUI {
   _removeLineByPrice(chartId, price) {
     const chartObj = this.m.charts.get(chartId);
     if (!chartObj) return;
-    const line = chartObj._horizontalLines.find(l => {
-      const p = l.options().price;
-      return p != null && Math.abs(p - price) < 0.5;
-    });
-    if (line) {
-      chartObj.mainSeries.removePriceLine(line);
-      chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== line);
-    }
-    this.m.removeAlert(chartId, price);
+    this.m._removeLineFromAll(price, chartObj.config.symbol);
   }
 
   buildHeader(id) {
@@ -151,14 +145,7 @@ export class ChartUI {
 
     const list = document.createElement("div");
     list.className = "ch-symbol-list";
-    SYMBOLS.forEach(s => {
-      const item = document.createElement("div");
-      item.className = "ch-symbol-item";
-      item.dataset.ticker = s.ticker;
-      item.dataset.source = s.source;
-      item.innerHTML = `<span class="ch-si-icon">${s.icon}</span><span class="ch-si-name">${s.name}</span><span class="ch-si-ticker">${s.ticker}</span>`;
-      list.appendChild(item);
-    });
+    SYMBOLS.forEach(s => list.appendChild(buildSymbolItemEl(s)));
     symbolDropdown.appendChild(list);
 
     symbolBtn.addEventListener("click", (e) => {
@@ -193,9 +180,7 @@ export class ChartUI {
         if (ticker) {
           symbolBtn.textContent = ticker;
           symbolDropdown.classList.add("hidden");
-          this.m._updateChartConfig(id, { symbol: ticker, source: "moex" });
-          this.m._reloadChart(id);
-          this.m.syncSymbolTimeframe(ticker, chartObj.config.timeframe, "moex", id);
+          this.m.changeSymbol(ticker, "moex", id);
         }
       }
     });
@@ -206,9 +191,7 @@ export class ChartUI {
         const source = item.dataset.source;
         symbolBtn.textContent = ticker;
         symbolDropdown.classList.add("hidden");
-        this.m._updateChartConfig(id, { symbol: ticker, source });
-        this.m._reloadChart(id);
-        this.m.syncSymbolTimeframe(ticker, chartObj.config.timeframe, source, id);
+        this.m.changeSymbol(ticker, source, id);
       });
     });
 
@@ -222,9 +205,7 @@ export class ChartUI {
       btn.addEventListener("click", () => {
         tfContainer.querySelectorAll(".ch-tf-btn").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
-        this.m._updateChartConfig(id, { timeframe: t.tf });
-        this.m._reloadChart(id);
-        this.m.syncSymbolTimeframe(chartObj.config.symbol, t.tf, chartObj.config.source, id);
+        this.m.changeTimeframe(t.tf, id);
       });
       tfContainer.appendChild(btn);
     });
@@ -263,8 +244,12 @@ export class ChartUI {
     clearBtn.title = "Удалить все объекты";
     clearBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.m.removeAllHorizontalLines(id);
-      this.m.alerts = this.m.alerts.filter(a => a.chartId !== id);
+      const symbol = chartObj.config.symbol;
+      for (const [cid, obj] of this.m.charts) {
+        if (obj.config.symbol !== symbol) continue;
+        this.m.removeAllHorizontalLines(cid);
+      }
+      this.m.alerts = this.m.alerts.filter(a => a.symbol !== symbol);
       this.m._saveAlerts();
     });
     indContainer.appendChild(clearBtn);
@@ -569,7 +554,7 @@ export class ChartUI {
   }
 
   bindChartInteractions(id, body, chartObj) {
-    body.addEventListener("mousedown", (e) => {
+    const onHorizontal = (e) => {
       if (e.button !== 0) return;
       if (this.m._activeTool !== "horizontal") return;
       const rect = body.getBoundingClientRect();
@@ -591,9 +576,9 @@ export class ChartUI {
       this.m._activeTool = "crosshair";
       document.querySelectorAll(".tool-btn[data-tool]").forEach(b => b.classList.remove("active"));
       document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
-    }, true);
+    };
 
-    body.addEventListener("mousedown", (e) => {
+    const onEraser = (e) => {
       if (e.button !== 0) return;
       if (this.m._activeTool !== "eraser") return;
       if (chartObj._horizontalLines.length === 0) return;
@@ -609,11 +594,17 @@ export class ChartUI {
       }
       if (closest && minDist < 10) {
         const removedPrice = closest.options().price;
-        chartObj.mainSeries.removePriceLine(closest);
-        chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== closest);
-        this.m.removeAlert(id, removedPrice);
+        this.m._removeLineFromAll(removedPrice, chartObj.config.symbol);
       }
-    }, true);
+    };
+
+    body.addEventListener("mousedown", onHorizontal, true);
+    body.addEventListener("mousedown", onEraser, true);
+
+    chartObj._boundListeners = [
+      { target: body, handler: onHorizontal, capture: true },
+      { target: body, handler: onEraser, capture: true },
+    ];
 
     body.addEventListener("contextmenu", (e) => {
       e.preventDefault();
@@ -641,6 +632,14 @@ export class ChartUI {
       this.showChartSettings(id);
     });
     body.appendChild(gearBtn);
+  }
+
+  unbindChartInteractions(chartObj) {
+    if (!chartObj._boundListeners) return;
+    for (const { target, handler, capture } of chartObj._boundListeners) {
+      target.removeEventListener("mousedown", handler, capture);
+    }
+    chartObj._boundListeners = null;
   }
 }
 
