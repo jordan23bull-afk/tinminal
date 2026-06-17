@@ -1,47 +1,14 @@
-import { ChartManager, addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns, mergeIndicators, getDeletedTickers } from "./chart-manager.js";
+import { ChartManager, addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns, getDeletedTickers } from "./chart-manager.js";
 import { WSClient } from "./ws-client.js";
 import { LayoutManager } from "./layout-manager.js";
 import { generateId, log } from "./utils.js";
+import { calcIndicator, mergeIndicators } from "./indicators.js";
 
 let selectedTimeframe = "1h";
 let isLoading = false;
 
-function loadChartData(chartId, symbol, timeframe, source, chartType) {
-  if (wsClient.connected) {
-    wsClient.subscribe(symbol, timeframe, source);
-  }
-  fetch("/api/history", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source, symbol, timeframe, limit: 500, indicators: {} })
-  })
-    .then(res => res.json())
-    .then(data => {
-      if (data.error) throw new Error(data.error);
-      const chartObj = chartManager.charts.get(chartId);
-      if (chartObj) {
-        if (chartObj.chartType !== chartType) {
-          chartManager.changeChartType(chartId, chartType);
-        }
-        chartObj.config._lastCandles = data.candles;
-
-        const indicatorData = {};
-        for (const indId of Object.keys(chartObj.indicators)) {
-          const calcData = chartManager._calcIndicator(indId, data.candles);
-          if (calcData) indicatorData[indId] = calcData;
-        }
-
-        chartManager.updateData(chartId, data.candles, indicatorData);
-        if (data.candles.length > 0) {
-          chartManager.checkAlerts(data.candles[data.candles.length - 1]);
-        }
-      }
-    })
-    .catch(e => log("Load chart data error:", e));
-}
-
 mergeIndicators();
-const chartManager = new ChartManager("charts-grid", loadChartData);
+const chartManager = new ChartManager("charts-grid", loadHistory);
 const wsClient = new WSClient();
 const layoutManager = new LayoutManager(document.getElementById("charts-grid"));
 
@@ -92,7 +59,7 @@ function setupWatchlistItem(item) {
         chartObj.config.source = source;
         const btn = chartObj.container.querySelector(".ch-symbol-btn");
         if (btn) btn.textContent = symbol;
-        loadChartData(activeId, symbol, chartObj.config.timeframe, source, chartObj.chartType);
+        loadHistory(activeId, null, symbol, chartObj.config.timeframe, source, chartObj.chartType);
       }
     }
     symbolInput.value = symbol;
@@ -249,10 +216,10 @@ function autoLoad(indicatorName = null) {
   loadHistory(null, indicatorName);
 }
 
-async function loadHistory(forceChartId = null, indicatorName = null) {
-  const source = sourceSelect.value;
-  const symbol = symbolInput.value.trim().toUpperCase();
-  const chartType = "candlestick";
+async function loadHistory(forceChartId = null, indicatorName = null, symbol = null, timeframe = null, source = null, chartType = null) {
+  source = source || sourceSelect.value;
+  symbol = (symbol || symbolInput.value).trim().toUpperCase();
+  chartType = chartType || "candlestick";
 
   if (!symbol) return;
 
@@ -261,11 +228,13 @@ async function loadHistory(forceChartId = null, indicatorName = null) {
     chartId = chartManager.getAllChartIds()[0];
   }
 
-  let timeframe = selectedTimeframe;
-  if (chartId) {
-    const firstChart = chartManager.charts.get(chartId);
-    if (firstChart && firstChart.config.timeframe) {
-      timeframe = firstChart.config.timeframe;
+  if (!timeframe) {
+    timeframe = selectedTimeframe;
+    if (chartId) {
+      const firstChart = chartManager.charts.get(chartId);
+      if (firstChart && firstChart.config.timeframe) {
+        timeframe = firstChart.config.timeframe;
+      }
     }
   }
 
@@ -290,24 +259,38 @@ async function loadHistory(forceChartId = null, indicatorName = null) {
     const data = await res.json();
     if (data.error) throw new Error(data.error);
 
+    const indicatorData = { ...data.indicators };
     if (chartId) {
       const chartObj = chartManager.charts.get(chartId);
-      if (chartObj && chartObj.chartType !== chartType) {
-        chartManager.changeChartType(chartId, chartType);
+      if (chartObj) {
+        if (chartType && chartObj.chartType !== chartType) {
+          chartManager.changeChartType(chartId, chartType);
+        }
+        chartObj.config.symbol = symbol;
+        chartObj.config.source = source;
+        chartObj.config.timeframe = timeframe;
+        chartObj.config._lastCandles = data.candles;
+        const symbolBtn = chartObj.container.querySelector(".ch-symbol-btn");
+        if (symbolBtn) symbolBtn.textContent = symbol;
+
+        for (const indId of Object.keys(chartObj.indicators)) {
+          if (!(indId in indicatorData)) {
+            const calcData = calcIndicator(indId, data.candles);
+            if (calcData) indicatorData[indId] = calcData;
+          }
+        }
+
+        chartManager.updateData(chartId, data.candles, indicatorData);
+        if (data.candles.length > 0) {
+          chartManager.checkAlerts(data.candles[data.candles.length - 1]);
+        }
       }
-      chartObj.config.symbol = symbol;
-      chartObj.config.source = source;
-      chartObj.config.timeframe = timeframe;
-      chartObj.config._lastCandles = data.candles;
-      const symbolBtn = chartObj.container.querySelector(".ch-symbol-btn");
-      if (symbolBtn) symbolBtn.textContent = symbol;
-      chartManager.updateData(chartId, data.candles, data.indicators);
     } else {
       chartId = generateId();
       chartManager.createChart(chartId, { symbol, timeframe, source, chartType });
       const chartObj = chartManager.charts.get(chartId);
       chartObj.config._lastCandles = data.candles;
-      chartManager.updateData(chartId, data.candles, data.indicators);
+      chartManager.updateData(chartId, data.candles, indicatorData);
     }
 
     statusText.textContent = `${symbol} ${timeframe} | ${data.candles.length} candles`;
@@ -315,7 +298,6 @@ async function loadHistory(forceChartId = null, indicatorName = null) {
       layoutManager.autoLayout(chartManager.charts.size);
     }
 
-    // Auto-subscribe to real-time updates
     if (wsClient.connected) {
       wsClient.subscribe(symbol, timeframe, source);
     }
@@ -345,6 +327,7 @@ const LAYOUT_ICONS = {
 
 let currentLayoutCount = 1;
 let currentLayoutOption = 0;
+let layoutVersion = 0;
 
 function renderLayoutGrid() {
   layoutGrid.innerHTML = "";
@@ -412,6 +395,7 @@ function renderLayoutGrid() {
 }
 
 function selectLayout(count, optionIndex) {
+  const myVersion = ++layoutVersion;
   currentLayoutCount = count;
   currentLayoutOption = optionIndex;
   layoutTriggerText.textContent = count;
@@ -438,42 +422,40 @@ function selectLayout(count, optionIndex) {
 
   layoutManager.setLayoutByCount(count, optionIndex);
 
-  requestAnimationFrame(() => {
-    setTimeout(() => {
-      const newCharts = [];
-      for (let i = 0; i < count; i++) {
-        const id = generateId();
-        const symbol = symbolInput.value.trim().toUpperCase();
-        const timeframe = selectedTimeframe;
-        const source = sourceSelect.value;
-        const chartType = "candlestick";
-        chartManager.createChart(id, { symbol, timeframe, source, chartType });
-        newCharts.push({ id, symbol });
-        loadHistory(id);
-      }
-      layoutManager.applyLayout();
+  const newCharts = [];
+  for (let i = 0; i < count; i++) {
+    const id = generateId();
+    const symbol = symbolInput.value.trim().toUpperCase();
+    const timeframe = selectedTimeframe;
+    const source = sourceSelect.value;
+    const chartType = "candlestick";
+    chartManager.createChart(id, { symbol, timeframe, source, chartType });
+    newCharts.push({ id, symbol });
+  }
+  layoutManager.applyLayout();
 
-      setTimeout(() => {
-        const symbolToChartIds = {};
-        for (const { id, symbol } of newCharts) {
-          if (!symbolToChartIds[symbol]) symbolToChartIds[symbol] = [];
-          symbolToChartIds[symbol].push(id);
-        }
-        for (const [symbol, prices] of Object.entries(savedLinesPerSymbol)) {
-          const ids = symbolToChartIds[symbol] || [];
-          ids.forEach(chartId => {
-            prices.forEach(price => chartManager.addHorizontalLine(chartId, price));
-          });
-        }
-        chartManager.alerts = savedAlerts.map(a => {
-          const ids = symbolToChartIds[a.symbol];
-          const newId = ids && ids[0];
-          return newId ? { ...a, chartId: newId } : a;
-        });
-        chartManager._saveAlerts();
-        chartManager.restoreAlertColors();
-      }, 500);
-    }, 50);
+  const symbolToChartIds = {};
+  for (const { id, symbol } of newCharts) {
+    if (!symbolToChartIds[symbol]) symbolToChartIds[symbol] = [];
+    symbolToChartIds[symbol].push(id);
+  }
+
+  const fetches = newCharts.map(({ id }) => loadHistory(id));
+  Promise.all(fetches).then(() => {
+    if (myVersion !== layoutVersion) return;
+    for (const [symbol, prices] of Object.entries(savedLinesPerSymbol)) {
+      const chartIds = symbolToChartIds[symbol] || [];
+      chartIds.forEach(chartId => {
+        prices.forEach(price => chartManager.addHorizontalLine(chartId, price));
+      });
+    }
+    chartManager.alerts = savedAlerts.map(a => {
+      const chartIds = symbolToChartIds[a.symbol];
+      const newId = chartIds && chartIds[0];
+      return newId ? { ...a, chartId: newId } : a;
+    });
+    chartManager._saveAlerts();
+    chartManager.restoreAlertColors();
   });
 
   layoutDropdown.classList.add("hidden");
@@ -553,45 +535,43 @@ function restoreState(state) {
   layoutManager.setLayoutByCount(currentLayoutCount, currentLayoutOption);
   layoutTriggerText.textContent = currentLayoutCount;
 
-  requestAnimationFrame(() => {
-    setTimeout(() => {
-      state.charts.forEach((chartCfg, index) => {
-        setTimeout(() => {
-          const id = generateId();
-          chartManager.createChart(id, {
-            symbol: chartCfg.symbol,
-            source: chartCfg.source,
-            timeframe: chartCfg.timeframe,
-            chartType: chartCfg.chartType
-          });
+  const chartIds = [];
+  for (const chartCfg of state.charts) {
+    const id = generateId();
+    chartManager.createChart(id, {
+      symbol: chartCfg.symbol,
+      source: chartCfg.source,
+      timeframe: chartCfg.timeframe,
+      chartType: chartCfg.chartType
+    });
 
-          const chartObj = chartManager.charts.get(id);
-          if (chartObj && chartCfg.indicators && chartCfg.indicators.length > 0) {
-            chartCfg.indicators.forEach(indId => {
-              const color = chartManager.indicatorColors[indId] || "#787B86";
-              const series = chartObj.chart.addLineSeries({
-                color,
-                lineWidth: 2,
-                priceFormat: { type: "price", precision: 2, minMove: 0.01 }
-              });
-              chartObj.indicators[indId] = series;
-            });
-          }
-
-          loadChartData(id, chartCfg.symbol, chartCfg.timeframe, chartCfg.source, chartCfg.chartType);
-
-          if (chartCfg.horizontalLines && chartCfg.horizontalLines.length > 0) {
-            setTimeout(() => {
-              chartCfg.horizontalLines.forEach(price => {
-                chartManager.addHorizontalLine(id, price);
-              });
-              chartManager.restoreAlertColors();
-            }, 300);
-          }
-        }, index * 300);
+    const chartObj = chartManager.charts.get(id);
+    if (chartObj && chartCfg.indicators && chartCfg.indicators.length > 0) {
+      chartCfg.indicators.forEach(indId => {
+        const color = chartManager.indicatorColors[indId] || "#787B86";
+        const series = chartObj.chart.addLineSeries({
+          color,
+          lineWidth: 2,
+          priceFormat: { type: "price", precision: 2, minMove: 0.01 }
+        });
+        chartObj.indicators[indId] = series;
       });
-      layoutManager.applyLayout();
-    }, 50);
+    }
+
+    chartIds.push({ id, chartCfg });
+  }
+  layoutManager.applyLayout();
+
+  const fetches = chartIds.map(({ id, chartCfg }) =>
+    loadHistory(id, null, chartCfg.symbol, chartCfg.timeframe, chartCfg.source, chartCfg.chartType)
+  );
+  Promise.all(fetches).then(() => {
+    for (const { id, chartCfg } of chartIds) {
+      if (chartCfg.horizontalLines && chartCfg.horizontalLines.length > 0) {
+        chartCfg.horizontalLines.forEach(price => chartManager.addHorizontalLine(id, price));
+      }
+    }
+    chartManager.restoreAlertColors();
   });
 
   return true;

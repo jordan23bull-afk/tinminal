@@ -18,140 +18,6 @@
   gap: 4px;
 }
 
-/* Timeframe Buttons */
-.timeframe-buttons {
-  display: flex;
-  gap: 1px;
-  background: var(--bg-primary);
-  border-radius: var(--radius);
-  padding: 2px;
-}
-
-.timeframe-buttons button {
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  padding: 3px 7px;
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: 3px;
-  transition: all var(--transition);
-  font-weight: 500;
-}
-
-.timeframe-buttons button:hover {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-}
-
-.timeframe-buttons button.active {
-  color: var(--accent-blue);
-  background: var(--bg-tertiary);
-}
-
-/* Chart Type Select */
-.chart-type-select {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  padding: 3px 8px;
-  font-size: 12px;
-  outline: none;
-  cursor: pointer;
-}
-
-.chart-type-select option {
-  background: var(--bg-tertiary);
-}
-
-/* Toolbar Buttons */
-.toolbar-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  background: transparent;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  padding: 4px 10px;
-  font-size: 12px;
-  cursor: pointer;
-  border-radius: var(--radius);
-  transition: all var(--transition);
-  white-space: nowrap;
-}
-
-.toolbar-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--border-light);
-  background: var(--bg-tertiary);
-}
-
-.toolbar-btn.accent {
-  background: var(--accent-blue);
-  color: white;
-  border-color: var(--accent-blue);
-}
-
-.toolbar-btn.accent:hover {
-  background: #1a4fd6;
-}
-
-.toolbar-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Live Button */
-.live-btn {
-  position: relative;
-}
-
-.live-btn .live-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent-red);
-  transition: background var(--transition);
-}
-
-.live-btn.active {
-  border-color: var(--accent-green);
-  color: var(--accent-green);
-}
-
-.live-btn.active .live-dot {
-  background: var(--accent-green);
-  animation: pulse 1.5s infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
-}
-
-/* Icon Button */
-.icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  background: transparent;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-  border-radius: var(--radius);
-  cursor: pointer;
-  font-size: 14px;
-  transition: all var(--transition);
-}
-
-.icon-btn:hover {
-  color: var(--text-primary);
-  border-color: var(--border-light);
-  background: var(--bg-tertiary);
-}
-
 .icon-btn-sm {
   display: flex;
   align-items: center;
@@ -169,50 +35,6 @@
 
 .icon-btn-sm:hover {
   color: var(--text-primary);
-  background: var(--bg-tertiary);
-}
-
-/* Separator */
-.toolbar-separator {
-  width: 1px;
-  height: 20px;
-  background: var(--border-color);
-  margin: 0 4px;
-}
-
-/* Dropdown Menu */
-.dropdown-menu {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius);
-  padding: 4px;
-  z-index: 100;
-  min-width: 140px;
-  box-shadow: var(--shadow);
-}
-
-.dropdown-menu.hidden {
-  display: none;
-}
-
-.dropdown-menu button {
-  display: block;
-  width: 100%;
-  background: transparent;
-  border: none;
-  color: var(--text-primary);
-  padding: 6px 12px;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-  border-radius: 3px;
-  transition: background var(--transition);
-}
-
-.dropdown-menu button:hover {
   background: var(--bg-tertiary);
 }
 
@@ -247,11 +69,6 @@
 
 .layout-trigger-text {
   font-weight: 600;
-}
-
-.layout-arrow {
-  width: 8px;
-  height: 5px;
 }
 
 .layout-dropdown {
