@@ -1388,7 +1388,11 @@ export class ChartManager {
 
   restoreAlertColors() {
     for (const alert of this.alerts) {
-      this._updateLineColor(alert.chartId, alert.price, "#FF9800");
+      for (const [id, chartObj] of this.charts) {
+        if (chartObj.config.symbol === alert.symbol) {
+          this._updateLineColor(id, alert.price, "#FF9800");
+        }
+      }
     }
   }
 }

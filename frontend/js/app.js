@@ -422,6 +422,15 @@ function selectLayout(count, optionIndex) {
     );
   });
 
+  const savedLinesPerSymbol = {};
+  for (const [id, chartObj] of chartManager.charts) {
+    const symbol = chartObj.config.symbol;
+    if (symbol && chartObj._horizontalLines.length > 0) {
+      savedLinesPerSymbol[symbol] = chartObj._horizontalLines.map(l => l.options().price);
+    }
+  }
+  const savedAlerts = [...chartManager.alerts];
+
   const ids = chartManager.getAllChartIds();
   while (ids.length > 0) {
     chartManager.removeChart(ids.pop());
@@ -431,6 +440,7 @@ function selectLayout(count, optionIndex) {
 
   requestAnimationFrame(() => {
     setTimeout(() => {
+      const newCharts = [];
       for (let i = 0; i < count; i++) {
         const id = generateId();
         const symbol = symbolInput.value.trim().toUpperCase();
@@ -438,9 +448,31 @@ function selectLayout(count, optionIndex) {
         const source = sourceSelect.value;
         const chartType = "candlestick";
         chartManager.createChart(id, { symbol, timeframe, source, chartType });
+        newCharts.push({ id, symbol });
         loadHistory(id);
       }
       layoutManager.applyLayout();
+
+      setTimeout(() => {
+        const symbolToChartIds = {};
+        for (const { id, symbol } of newCharts) {
+          if (!symbolToChartIds[symbol]) symbolToChartIds[symbol] = [];
+          symbolToChartIds[symbol].push(id);
+        }
+        for (const [symbol, prices] of Object.entries(savedLinesPerSymbol)) {
+          const ids = symbolToChartIds[symbol] || [];
+          ids.forEach(chartId => {
+            prices.forEach(price => chartManager.addHorizontalLine(chartId, price));
+          });
+        }
+        chartManager.alerts = savedAlerts.map(a => {
+          const ids = symbolToChartIds[a.symbol];
+          const newId = ids && ids[0];
+          return newId ? { ...a, chartId: newId } : a;
+        });
+        chartManager._saveAlerts();
+        chartManager.restoreAlertColors();
+      }, 500);
     }, 50);
   });
 
