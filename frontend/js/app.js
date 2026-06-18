@@ -1,8 +1,10 @@
-import { ChartManager, addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns, getDeletedTickers } from "./chart-manager.js";
+import { ChartManager } from "./chart-manager.js";
 import { WSClient } from "./ws-client.js";
 import { LayoutManager } from "./layout-manager.js";
 import { generateId, log } from "./utils.js";
 import { calcIndicator, mergeIndicators, loadCustomIndicators } from "./indicators.js";
+import { loadTickers, saveTickers, addTicker, removeTicker, loadFlags, saveFlags, toggleFlag, getTickerFlag, refreshAllSymbolDropdowns } from "./tickers.js";
+import { loadFromServer } from "./storage.js";
 
 let selectedTimeframe = "1h";
 let isLoading = false;
@@ -43,51 +45,46 @@ wsClient.on("candleUpdate", (symbol, timeframe, candle) => {
 wsClient.connect();
 
 // Watchlist
-const WATCHLIST_KEY = "trading-dashboard-watchlist";
-const DEFAULT_WATCHLIST = [
-  { ticker: "SBER", source: "moex" },
-  { ticker: "GAZP", source: "moex" },
-  { ticker: "LKOH", source: "moex" },
-  { ticker: "YDEX", source: "moex" },
-  { ticker: "GMKN", source: "moex" },
-  { ticker: "ROSN", source: "moex" },
-  { ticker: "SNGS", source: "moex" },
-  { ticker: "VTBR", source: "moex" },
-  { ticker: "WUSH", source: "moex" },
-  { ticker: "PHOR", source: "moex" },
-  { ticker: "SBERP", source: "moex" },
-  { ticker: "SMLT", source: "moex" },
-  { ticker: "TATN", source: "moex" },
-];
+let currentFilter = "all";
 
-function loadWatchlist() {
-  try {
-    const raw = localStorage.getItem(WATCHLIST_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return [...DEFAULT_WATCHLIST];
-}
-
-function saveWatchlist(list) {
-  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
-}
+let activeFlagColor = null;
 
 function createWatchlistItemEl(ticker, source) {
   const div = document.createElement("div");
   div.className = "watchlist-item";
   div.dataset.symbol = ticker;
   div.dataset.source = source;
-  div.innerHTML = `<div class="wl-col wl-col-symbol"><div class="wl-icon moex">${ticker.charAt(0)}</div><span class="wl-symbol">${ticker}</span></div><div class="wl-col wl-col-change"><span class="wl-change">—</span></div><div class="wl-col wl-col-volume"><span class="wl-price">—</span></div>`;
+  const flag = getTickerFlag(ticker);
+  div.dataset.flag = flag || "";
+  const flagStyle = flag ? ` style="background:${flag === "red" ? "#ef5350" : flag === "green" ? "#26a69a" : "#ffb300"}"` : "";
+  div.innerHTML = `<div class="wl-col wl-col-symbol"><span class="wl-flag-left"${flagStyle}></span><div class="wl-icon moex">${ticker.charAt(0)}</div><span class="wl-symbol">${ticker}</span></div><div class="wl-col wl-col-change"><span class="wl-change">—</span></div><div class="wl-col wl-col-volume"><span class="wl-price">—</span></div>`;
   setupWatchlistItem(div);
+  const flagEl = div.querySelector(".wl-flag-left");
+  flagEl.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (flagEl.style.background) {
+      toggleFlag(ticker, div.dataset.flag);
+      flagEl.style.background = "";
+      div.dataset.flag = "";
+    } else if (activeFlagColor) {
+      toggleFlag(ticker, activeFlagColor);
+      flagEl.style.background = activeFlagColor === "red" ? "#ef5350" : activeFlagColor === "green" ? "#26a69a" : "#ffb300";
+      div.dataset.flag = activeFlagColor;
+    }
+    if (currentFilter !== "all") renderWatchlist();
+  });
   return div;
 }
 
 function renderWatchlist() {
   const container = document.getElementById("watchlist-items");
   container.innerHTML = "";
-  const list = loadWatchlist();
+  const list = loadTickers();
   list.forEach(({ ticker, source }) => {
-    addSymbolToList(ticker, ticker);
+    if (currentFilter !== "all") {
+      const flag = getTickerFlag(ticker);
+      if (flag !== currentFilter) return;
+    }
     container.appendChild(createWatchlistItemEl(ticker, source || "moex"));
   });
   refreshAllSymbolDropdowns();
@@ -116,9 +113,8 @@ function setupWatchlistItem(item) {
       e.stopPropagation();
       const ticker = item.dataset.symbol;
       item.remove();
-      const list = loadWatchlist().filter(t => t.ticker !== ticker);
-      saveWatchlist(list);
-      removeSymbolFromAll(ticker);
+      removeTicker(ticker);
+      refreshAllSymbolDropdowns();
     });
     item.appendChild(del);
   }
@@ -134,13 +130,53 @@ if (addTickerBtn) {
     if (!input) return;
     const ticker = input.toUpperCase().trim();
     if (!ticker) return;
-    const list = loadWatchlist();
-    if (list.some(t => t.ticker === ticker)) return;
-    list.push({ ticker, source: "moex" });
-    saveWatchlist(list);
-    renderWatchlist();
+    if (addTicker(ticker, ticker)) {
+      renderWatchlist();
+    }
   });
 }
+
+// Watchlist filter dropdown
+const wlFilterTrigger = document.getElementById("wl-filter-trigger");
+const wlFilterDropdown = document.getElementById("wl-filter-dropdown");
+
+if (wlFilterTrigger && wlFilterDropdown) {
+  wlFilterTrigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    wlFilterDropdown.classList.toggle("hidden");
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!wlFilterTrigger.contains(e.target) && !wlFilterDropdown.contains(e.target)) {
+      wlFilterDropdown.classList.add("hidden");
+    }
+  });
+
+  wlFilterDropdown.querySelectorAll(".wl-filter-item").forEach(item => {
+    item.addEventListener("click", () => {
+      wlFilterDropdown.querySelectorAll(".wl-filter-item").forEach(i => i.classList.remove("active"));
+      item.classList.add("active");
+      currentFilter = item.dataset.filter;
+      renderWatchlist();
+      wlFilterDropdown.classList.add("hidden");
+    });
+  });
+}
+
+// Flag mode buttons
+document.querySelectorAll(".wl-flag-mode").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const color = btn.dataset.color;
+    if (activeFlagColor === color) {
+      activeFlagColor = null;
+      btn.classList.remove("active");
+    } else {
+      activeFlagColor = color;
+      document.querySelectorAll(".wl-flag-mode").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+    }
+  });
+});
 
 // Sidebar resize
 const sidebarResize = document.getElementById("sidebar-resize");
@@ -256,6 +292,34 @@ function setupColumnResize() {
 }
 setupColumnResize();
 
+// Sort by change % on column header click
+let priceChanges = {};
+let sortMode = null;
+
+const changeCol = document.querySelector(".wl-columns-header .wl-col-change");
+if (changeCol) {
+  changeCol.style.cursor = "pointer";
+  changeCol.addEventListener("click", () => {
+    const list = loadTickers();
+    if (list.length === 0) return;
+
+    if (sortMode === "asc") {
+      sortMode = "desc";
+    } else {
+      sortMode = "asc";
+    }
+
+    list.sort((a, b) => {
+      const aVal = priceChanges[a.ticker] ?? -Infinity;
+      const bVal = priceChanges[b.ticker] ?? -Infinity;
+      return sortMode === "asc" ? aVal - bVal : bVal - aVal;
+    });
+
+    saveTickers();
+    renderWatchlist();
+  });
+}
+
 // Update clock
 function updateClock() {
   const now = new Date();
@@ -368,7 +432,8 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
             const calcData = calcIndicator(indId, data.candles);
             if (calcData) indicatorData[indId] = calcData;
           }
-        }
+}
+
 
         chartManager.updateData(chartId, data.candles, indicatorData);
         if (data.candles.length > 0) {
@@ -722,10 +787,10 @@ document.querySelectorAll("[data-btf]").forEach(btn => {
   });
 });
 
-loadSources().then(() => {
+loadFromServer().then(() => loadSources()).then(() => {
   const savedState = loadState();
   if (savedState && restoreState(savedState)) {
-    log("State restored from localStorage");
+    log("State restored from server/localStorage");
   } else {
     autoLoad();
   }
@@ -749,8 +814,10 @@ async function updateWatchlistPrices() {
       if (!info) {
         if (priceEl) priceEl.textContent = "—";
         if (changeEl) { changeEl.textContent = "—"; changeEl.className = "wl-change"; }
+        priceChanges[sym] = null;
         return;
       }
+      priceChanges[sym] = info.changePct;
       const priceStr = info.price >= 1000
         ? info.price.toLocaleString("ru-RU", { maximumFractionDigits: 0 })
         : info.price.toFixed(2);

@@ -1,15 +1,15 @@
 # Local Trading Dashboard
 
-Modular offline web application for multi-chart market analysis, similar to TradingView but working entirely on localhost.
+Multi-chart market analysis app for MOEX, running on localhost.
 
 ## Features
 
-- Multi-chart grid with lightweight-charts (TradingView)
+- Multi-chart grid with lightweight-charts
 - Real-time WebSocket updates
-- Plugin architecture for data sources and indicators
+- Plugin architecture for data sources
 - Dark trading theme
-- Built-in indicators: RSI, MACD, SMA
-- Data sources: Mock (testing), Binance (live)
+- Client-side indicators: RSI, MACD, SMA, Bollinger, ATR, WMA, Stochastic, POC
+- Data source: MOEX ISS (live)
 
 ## Quick Start
 
@@ -33,7 +33,7 @@ pip install -r requirements.txt
 python core/app.py
 ```
 
-Open `frontend/index.html` in your browser.
+Open `http://localhost:5000` in your browser.
 
 ## Project Structure
 
@@ -43,21 +43,13 @@ local-trading-dashboard/
 │   ├── core/
 │   │   ├── app.py              # Flask + REST + WebSocket
 │   │   ├── registry.py         # Plugin auto-registration
-│   │   └── interfaces.py       # IDataSource, IIndicator contracts
-│   ├── data_sources/
-│   │   ├── mock_source.py      # Test data generator
-│   │   └── binance_source.py   # Binance API
-│   ├── indicators/
-│   │   ├── rsi.py              # Relative Strength Index
-│   │   ├── macd.py             # MACD
-│   │   └── sma.py              # Simple Moving Average
-│   ├── models/
-│   │   └── schemas.py          # Data classes
-│   └── config/                 # JSON configs
+│   │   └── interfaces.py       # IDataSource contract
+│   └── data_sources/
+│       └── moex_source.py      # MOEX ISS API
 ├── frontend/
 │   ├── index.html
 │   ├── css/                    # Themes and layout
-│   └── js/                     # App, ChartManager, WSClient
+│   └── js/                     # App, ChartManager, WSClient, indicators
 └── run.bat / run.sh
 ```
 
@@ -67,12 +59,12 @@ local-trading-dashboard/
 |--------|----------|-------------|
 | GET | /api/health | Health check |
 | GET | /api/sources | List data sources |
-| GET | /api/indicators | List indicators with params |
-| POST | /api/history | Fetch historical candles + indicators |
+| GET | /api/prices | Current prices for tickers |
+| POST | /api/history | Fetch historical candles |
 
-## Adding New Plugins
+## Adding New Data Sources
 
-1. Create a new Python file in `backend/data_sources/` or `backend/indicators/`
-2. Implement `IDataSource` or `IIndicator` interface
-3. Call `ModuleRegistry.register_*()` at module level
+1. Create a new Python file in `backend/data_sources/`
+2. Implement `IDataSource` interface
+3. Call `ModuleRegistry.register_data_source()` at module level
 4. Restart the server — auto-discovered on startup

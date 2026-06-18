@@ -9,20 +9,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from core.interfaces import IDataSource
 from core.registry import ModuleRegistry
 
+BOARDS = {
+    "shares": {"engine": "stock", "market": "shares", "board": "TQBR"},
+    "futures": {"engine": "futures", "market": "forts", "board": "RFUD"},
+}
+
 TF_MAP = {
     "1m": "1", "10m": "10",
     "1h": "60", "1d": "24",
 }
 
 TF_SECONDS = {"1m": 60, "10m": 600, "1h": 3600, "1d": 86400}
-
-MOEX_TICKERS = {
-    "SBER": "SBER", "GAZP": "GAZP", "LKOH": "LKOH",
-    "YDEX": "YDEX", "GMKN": "GMKN", "ROSN": "ROSN",
-    "SNGS": "SNGS", "VTBR": "VTBR", "TCSG": "TCSG",
-    "PHOR": "PHOR", "SBERP": "SBERP", "GMKNP": "GMKNP",
-}
-
 
 class MoexSource(IDataSource):
     def __init__(self):
@@ -37,18 +34,23 @@ class MoexSource(IDataSource):
         return ["1m", "10m", "1h", "1d"]
 
     def _resolve_ticker(self, symbol):
-        symbol = symbol.upper()
-        if symbol in MOEX_TICKERS:
-            return MOEX_TICKERS[symbol]
-        return symbol
+        return symbol.upper()
 
-    def _fetch_candles(self, ticker, interval, from_date, to_date, start=0):
-        url = (
-            f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/"
-            f"securities/{ticker}/candles.json"
-            f"?from={from_date}&till={to_date}"
-            f"&interval={interval}&start={start}&iss.meta=off&iss.json=extended"
+    def _parse_symbol(self, symbol):
+        if symbol.upper().startswith("FUT:"):
+            return symbol[4:], "futures"
+        return symbol, "shares"
+
+    def _iss_url(self, board_type, ticker, endpoint):
+        b = BOARDS[board_type]
+        return (
+            f"https://iss.moex.com/iss/engines/{b['engine']}/markets/{b['market']}/boards/{b['board']}/"
+            f"securities/{ticker}{endpoint}"
         )
+
+    def _fetch_candles(self, ticker, interval, from_date, to_date, start=0, board_type="shares"):
+        url = self._iss_url(board_type, ticker, "/candles.json")
+        url += f"?from={from_date}&till={to_date}&interval={interval}&start={start}&iss.meta=off&iss.json=extended"
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         data = resp.json()
@@ -56,11 +58,11 @@ class MoexSource(IDataSource):
             return []
         return data[1].get("candles", [])
 
-    def _fetch_all_candles(self, ticker, interval, from_date, to_date):
+    def _fetch_all_candles(self, ticker, interval, from_date, to_date, board_type="shares"):
         all_candles = []
         start = 0
         while True:
-            batch = self._fetch_candles(ticker, interval, from_date, to_date, start)
+            batch = self._fetch_candles(ticker, interval, from_date, to_date, start, board_type)
             if not batch:
                 break
             all_candles.extend(batch)
@@ -70,7 +72,8 @@ class MoexSource(IDataSource):
         return all_candles
 
     def get_historical_data(self, symbol, timeframe, limit=500):
-        ticker = self._resolve_ticker(symbol)
+        ticker, board_type = self._parse_symbol(symbol)
+        ticker = self._resolve_ticker(ticker)
         interval = TF_MAP.get(timeframe, "60")
         tf_sec = TF_SECONDS.get(timeframe, 3600)
 
@@ -79,7 +82,11 @@ class MoexSource(IDataSource):
         to_date = now.strftime("%Y-%m-%d")
 
         try:
-            all_candles = self._fetch_all_candles(ticker, interval, from_date, to_date)
+            all_candles = self._fetch_all_candles(ticker, interval, from_date, to_date, board_type)
+
+            if not all_candles and board_type == "shares":
+                board_type = "futures"
+                all_candles = self._fetch_all_candles(ticker, interval, from_date, to_date, board_type)
 
             if not all_candles:
                 return []
@@ -87,8 +94,9 @@ class MoexSource(IDataSource):
             result = []
             for row in all_candles:
                 dt_naive = datetime.strptime(row["begin"], "%Y-%m-%d %H:%M:%S")
+                dt_msk = dt_naive.replace(tzinfo=timezone(timedelta(hours=3)))
                 result.append({
-                    "time": int(dt_naive.replace(tzinfo=timezone.utc).timestamp()),
+                    "time": int(dt_msk.timestamp()),
                     "open": float(row["open"]),
                     "high": float(row["high"]),
                     "low": float(row["low"]),
@@ -103,7 +111,8 @@ class MoexSource(IDataSource):
             raise
 
     def subscribe_realtime(self, symbol, timeframe, callback):
-        ticker = self._resolve_ticker(symbol)
+        ticker, board_type = self._parse_symbol(symbol)
+        ticker = self._resolve_ticker(ticker)
         interval = TF_MAP.get(timeframe, "60")
         interval_sec = TF_SECONDS.get(timeframe, 3600)
         key = (symbol, timeframe)
@@ -129,15 +138,16 @@ class MoexSource(IDataSource):
                 aligned = now_msk.replace(hour=h, minute=m, second=0, microsecond=0)
             return int(aligned.replace(tzinfo=timezone.utc).timestamp())
 
+        active_board = board_type
+
         def stream():
+            nonlocal active_board
             print(f"[MOEX] Stream started for {ticker} {timeframe}")
+            first_poll = True
             while not stop_event.is_set():
                 try:
-                    url = (
-                        f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/"
-                        f"securities/{ticker}.json"
-                        f"?iss.meta=off"
-                    )
+                    url = self._iss_url(active_board, ticker, ".json")
+                    url += "?iss.meta=off"
 
                     resp = requests.get(url, timeout=5)
                     resp.raise_for_status()
@@ -198,37 +208,72 @@ class MoexSource(IDataSource):
                         else:
                             print(f"[MOEX] {ticker}: price data unavailable (market closed?)")
                     else:
+                        if first_poll and active_board == "shares":
+                            active_board = "futures"
+                            first_poll = False
+                            print(f"[MOEX] {ticker}: no shares data, trying futures")
+                            continue
                         print(f"[MOEX] {ticker}: no market data returned")
                 except Exception as e:
                     print(f"[MOEX] Poll error for {ticker}: {e}")
 
+                first_poll = False
                 stop_event.wait(3)
 
         threading.Thread(target=stream, daemon=True).start()
         return True
 
     def get_prices(self, symbols):
-        tickers = [self._resolve_ticker(s) for s in symbols]
-        url = (
-            f"https://iss.moex.com/iss/engines/stock/markets/shares/boards/TQBR/"
-            f"securities.json?iss.meta=off&iss.json=extended"
-            f"&securities={','.join(tickers)}"
-        )
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        md_list = data[1].get("marketdata", [])
+        by_board = {}
+        raw_tickers = {}
+        for s in symbols:
+            ticker, board_type = self._parse_symbol(s)
+            ticker = self._resolve_ticker(ticker)
+            raw_tickers[s] = ticker
+            by_board.setdefault(board_type, []).append(ticker)
+
         result = {}
-        for row in md_list:
-            ticker = row.get("SECID")
-            price = row.get("LAST")
-            if not ticker or price is None:
+        for board_type, tickers in by_board.items():
+            b = BOARDS[board_type]
+            url = f"https://iss.moex.com/iss/engines/{b['engine']}/markets/{b['market']}/boards/{b['board']}/securities.json"
+            url += f"?iss.meta=off&iss.json=extended&securities={','.join(tickers)}"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            if not isinstance(data, list) or len(data) < 2:
                 continue
-            result[ticker] = {
-                "price": float(price),
-                "change": float(row["LASTCHANGE"]) if row.get("LASTCHANGE") is not None else None,
-                "changePct": float(row["LASTTOPREVPRICE"]) if row.get("LASTTOPREVPRICE") is not None else None,
-            }
+            md_list = data[1].get("marketdata", [])
+            for row in md_list:
+                ticker = row.get("SECID")
+                price = row.get("LAST")
+                if not ticker or price is None:
+                    continue
+                result[ticker.upper()] = {
+                    "price": float(price),
+                    "change": float(row["LASTCHANGE"]) if row.get("LASTCHANGE") is not None else None,
+                    "changePct": float(row["LASTTOPREVPRICE"]) if row.get("LASTTOPREVPRICE") is not None else None,
+                }
+
+        missing = [s for s in symbols if self._resolve_ticker(s).upper() not in result]
+        if missing:
+            fut_tickers = [self._resolve_ticker(s).upper() for s in missing]
+            b = BOARDS["futures"]
+            url = f"https://iss.moex.com/iss/engines/{b['engine']}/markets/{b['market']}/boards/{b['board']}/securities.json"
+            url += f"?iss.meta=off&iss.json=extended&securities={','.join(fut_tickers)}"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list) and len(data) >= 2:
+                for row in data[1].get("marketdata", []):
+                    ticker = row.get("SECID")
+                    price = row.get("LAST")
+                    if not ticker or price is None:
+                        continue
+                    result[ticker.upper()] = {
+                        "price": float(price),
+                        "change": float(row["LASTCHANGE"]) if row.get("LASTCHANGE") is not None else None,
+                        "changePct": float(row["LASTTOPREVPRICE"]) if row.get("LASTTOPREVPRICE") is not None else None,
+                    }
         return result
 
     def unsubscribe_realtime(self, symbol, timeframe):

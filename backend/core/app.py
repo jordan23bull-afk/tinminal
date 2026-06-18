@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import logging
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -22,6 +23,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 active_streams = {}
+SETTINGS_FILE = os.path.join(PROJECT_ROOT, "settings.json")
 
 
 def broadcast_candle(symbol, timeframe, candle):
@@ -65,6 +67,26 @@ def list_indicators():
         ind = ModuleRegistry.get_indicator(name)
         result[name] = {"parameters": ind.parameters, "output": ind.output_schema}
     return jsonify(result)
+
+
+@app.route("/api/settings", methods=["GET", "POST"])
+def settings():
+    if request.method == "GET":
+        try:
+            if os.path.exists(SETTINGS_FILE):
+                with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                    return jsonify(json.load(f))
+        except Exception as e:
+            logger.error(f"Settings load error: {e}")
+        return jsonify({})
+    else:
+        try:
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(request.json, f, ensure_ascii=False, indent=2)
+            return jsonify({"ok": True})
+        except Exception as e:
+            logger.error(f"Settings save error: {e}")
+            return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/history", methods=["POST"])

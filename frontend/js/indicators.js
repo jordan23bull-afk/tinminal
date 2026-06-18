@@ -140,10 +140,10 @@ export function calcIndicator(indId, candles) {
     const p = period;
     const result = [];
     for (let i = 0; i < candles.length; i++) {
-      if (i < p) { result.push({ time: candles[i].time, value: 50 }); continue; }
+      if (i <= p) { result.push({ time: candles[i].time, value: 50 }); continue; }
       let gains = 0, losses = 0;
       for (let j = i - p + 1; j <= i; j++) {
-        const diff = candles[j].close - candles[j].open;
+        const diff = candles[j].close - candles[j - 1].close;
         if (diff > 0) gains += diff; else losses -= diff;
       }
       const rs = losses === 0 ? 100 : gains / losses;
@@ -158,7 +158,7 @@ export function calcIndicator(indId, candles) {
     const ema26 = emaCalc(closes, slow);
     return ema12.map((d, i) => ({ time: d.time, value: d.value - ema26[i].value }));
   }
-  if (custom && custom.type === "bollinger") {
+  if (indId === "bollinger" || (custom && custom.type === "bollinger")) {
     const p = params.period || 20, mult = params.stddev || 2;
     const upper = [], lower = [];
     for (let i = 0; i < candles.length; i++) {

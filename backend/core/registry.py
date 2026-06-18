@@ -1,10 +1,7 @@
 import os
-import sys
 import importlib
 import logging
 from typing import Type, List
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from core.interfaces import IDataSource, IIndicator
 

@@ -1,5 +1,0 @@
-{
-  "available_sources": [
-    {"name": "moex", "description": "Moscow Exchange (MOEX ISS)", "requires_api_key": false}
-  ]
-}

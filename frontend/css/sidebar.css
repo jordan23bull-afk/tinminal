@@ -77,12 +77,112 @@
   justify-content: space-between;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border-color);
+  position: relative;
 }
 
 .watchlist-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.watchlist-title::after {
+  content: "▾";
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.wl-filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.wl-filter-dropdown.hidden { display: none; }
+
+.wl-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.wl-filter-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.wl-filter-item.active {
+  background: var(--bg-active);
+}
+
+.wl-flag-left {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.3);
+  transition: opacity 0.15s, box-shadow 0.15s;
+  display: inline-block;
+  background-color: rgba(255,255,255,0.15);
+  margin: -5px;
+  padding: 5px;
+  background-clip: content-box;
+  opacity: 1;
+}
+
+.wl-flag-left:hover {
+  opacity: 0.7;
+  box-shadow: 0 0 6px rgba(255,255,255,0.5);
+}
+
+.wl-flag-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.wl-flag-modes {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.wl-flag-mode {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.35;
+  transition: all 0.15s;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.wl-flag-mode:hover {
+  opacity: 0.7;
+  transform: scale(1.15);
+}
+
+.wl-flag-mode.active {
+  opacity: 1;
+  box-shadow: 0 0 6px currentColor;
+  border-color: rgba(255,255,255,0.4);
 }
 
 .wl-columns-header {
@@ -147,6 +247,11 @@
 .watchlist-items .watchlist-item .wl-col-symbol {
   flex: 1 1 0;
   min-width: 60px;
+  padding-left: 3px;
+}
+
+.watchlist-items .watchlist-item .wl-icon {
+  margin-left: 2px;
 }
 
 .watchlist-items .watchlist-item .wl-col-change {

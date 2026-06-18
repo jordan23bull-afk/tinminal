@@ -1,6 +1,6 @@
 import { log } from "./utils.js";
 import { calcIndicator, loadCustomIndicators } from "./indicators.js";
-import { ChartUI, addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns, getDeletedTickers } from "./chart-ui.js";
+import { ChartUI } from "./chart-ui.js";
 
 export class ChartManager {
   constructor(containerId, onChartChange) {
@@ -40,6 +40,12 @@ export class ChartManager {
       const exists = this.alerts.some(a => a.chartId === id && Math.abs(a.price - price) < 0.5);
       if (!exists) {
         this.alerts.push({ chartId: id, symbol, price, id: Date.now() });
+      }
+    }
+    for (const a of this.alerts) {
+      if (a.symbol === symbol && !this.charts.has(a.chartId)) {
+        const match = [...this.charts.entries()].find(([, c]) => c.config.symbol === symbol);
+        if (match) a.chartId = match[0];
       }
     }
     this._saveAlerts();
@@ -87,8 +93,6 @@ export class ChartManager {
     const notified = new Set();
     for (const alert of this.alerts) {
       if (alert.triggered) continue;
-      const chartObj = this.charts.get(alert.chartId);
-      if (!chartObj || chartObj.config.symbol !== alert.symbol) continue;
       if (candle.high >= alert.price && candle.low <= alert.price) {
         alert.triggered = true;
         const key = `${alert.symbol}_${alert.price}`;
@@ -96,7 +100,11 @@ export class ChartManager {
           this._sendNotification(alert, candle);
           notified.add(key);
         }
-        this._updateLineColor(alert.chartId, alert.price, "#2196F3");
+        for (const [id, chartObj] of this.charts) {
+          if (chartObj.config.symbol === alert.symbol) {
+            this._updateLineColor(id, alert.price, "#2196F3");
+          }
+        }
       }
     }
     this.alerts = this.alerts.filter(a => !a.triggered);
@@ -242,6 +250,7 @@ export class ChartManager {
     this.container.appendChild(wrapper);
 
     wrapper.addEventListener("mouseenter", () => this.setActiveChart(id));
+    wrapper.addEventListener("mousedown", () => this.setActiveChart(id));
 
     const chartObj = {
       chart: null, mainSeries: null, volumeSeries: null, chartType,
@@ -487,4 +496,3 @@ export class ChartManager {
   }
 }
 
-export { addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns, getDeletedTickers };

@@ -1,71 +1,8 @@
 import { log } from "./utils.js";
 import { INDICATOR_TYPES, INDICATORS, loadCustomIndicators, saveCustomIndicators, mergeIndicators, getDeletedIndicators } from "./indicators.js";
+import { loadTickers, addTicker, removeTicker, refreshAllSymbolDropdowns, buildSymbolItemEl } from "./tickers.js";
 
-const SYMBOLS = [
-  { ticker: "SBER", name: "Сбербанк", source: "moex", icon: "С" },
-  { ticker: "GAZP", name: "Газпром", source: "moex", icon: "Г" },
-  { ticker: "LKOH", name: "Лукойл", source: "moex", icon: "Л" },
-  { ticker: "YDEX", name: "Яндекс", source: "moex", icon: "Я" },
-  { ticker: "GMKN", name: "Норникель", source: "moex", icon: "Н" },
-  { ticker: "ROSN", name: "Роснефть", source: "moex", icon: "Р" },
-  { ticker: "SNGS", name: "Сургутнефтегаз", source: "moex", icon: "С" },
-  { ticker: "VTBR", name: "ВТБ", source: "moex", icon: "В" },
-  { ticker: "TCSG", name: "Т-Банк", source: "moex", icon: "Т" },
-  { ticker: "PHOR", name: "Фосагро", source: "moex", icon: "Ф" },
-  { ticker: "SBERP", name: "Сбербанк-П", source: "moex", icon: "С" },
-  { ticker: "GMKNP", name: "Норникель-П", source: "moex", icon: "Н" },
-];
-
-function addSymbolToList(ticker, name) {
-  if (SYMBOLS.find(s => s.ticker === ticker)) return false;
-  const icon = name.charAt(0).toUpperCase();
-  SYMBOLS.push({ ticker, name, source: "moex", icon });
-  return true;
-}
-
-function removeSymbolFromAll(ticker) {
-  const idx = SYMBOLS.findIndex(s => s.ticker === ticker);
-  if (idx >= 0) SYMBOLS.splice(idx, 1);
-  refreshAllSymbolDropdowns();
-  try {
-    const raw = localStorage.getItem("trading-dashboard-custom-tickers");
-    const tickers = raw ? JSON.parse(raw) : [];
-    localStorage.setItem("trading-dashboard-custom-tickers", JSON.stringify(tickers.filter(t => t.ticker !== ticker)));
-  } catch {}
-  try {
-    const raw = localStorage.getItem("trading-dashboard-deleted-tickers");
-    const deleted = raw ? JSON.parse(raw) : [];
-    if (!deleted.includes(ticker)) {
-      deleted.push(ticker);
-      localStorage.setItem("trading-dashboard-deleted-tickers", JSON.stringify(deleted));
-    }
-  } catch {}
-}
-
-function getDeletedTickers() {
-  try {
-    const raw = localStorage.getItem("trading-dashboard-deleted-tickers");
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function buildSymbolItemEl(s) {
-  const item = document.createElement("div");
-  item.className = "ch-symbol-item";
-  item.dataset.ticker = s.ticker;
-  item.dataset.source = s.source;
-  item.innerHTML = `<span class="ch-si-icon">${s.icon}</span><span class="ch-si-name">${s.name}</span><span class="ch-si-ticker">${s.ticker}</span>`;
-  return item;
-}
-
-function refreshAllSymbolDropdowns() {
-  document.querySelectorAll(".ch-symbol-dropdown").forEach(dropdown => {
-    const list = dropdown.querySelector(".ch-symbol-list");
-    if (!list) return;
-    list.innerHTML = "";
-    SYMBOLS.forEach(s => list.appendChild(buildSymbolItemEl(s)));
-  });
-}
+export { refreshAllSymbolDropdowns };
 
 const TIMEFRAMES = [
   { tf: "1m", label: "1m" },
@@ -145,7 +82,7 @@ export class ChartUI {
 
     const list = document.createElement("div");
     list.className = "ch-symbol-list";
-    SYMBOLS.forEach(s => list.appendChild(buildSymbolItemEl(s)));
+    loadTickers().forEach(s => list.appendChild(buildSymbolItemEl(s)));
     symbolDropdown.appendChild(list);
 
     symbolBtn.addEventListener("click", (e) => {
@@ -642,5 +579,3 @@ export class ChartUI {
     chartObj._boundListeners = null;
   }
 }
-
-export { addSymbolToList, removeSymbolFromAll, refreshAllSymbolDropdowns, getDeletedTickers };

@@ -21,7 +21,6 @@
         <input type="hidden" id="source-select" value="moex">
       </div>
       <div class="toolbar-right">
-        <span id="connection-status" class="status-disconnected">Disconnected</span>
         <div class="layout-selector" id="layout-selector">
           <button class="layout-trigger" id="layout-trigger" title="Раскладка графиков">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -109,8 +108,31 @@
       <aside class="sidebar-right">
         <div class="sidebar-resize-handle" id="sidebar-resize"></div>
         <div class="watchlist-header">
-          <span class="watchlist-title">Список</span>
+          <span class="watchlist-title" id="wl-filter-trigger">Список котировок</span>
+          <div class="wl-flag-modes">
+            <span class="wl-flag-mode" data-color="red" style="background:#ef5350"></span>
+            <span class="wl-flag-mode" data-color="green" style="background:#26a69a"></span>
+            <span class="wl-flag-mode" data-color="yellow" style="background:#ffb300"></span>
+          </div>
           <button class="icon-btn-sm">+</button>
+          <div class="wl-filter-dropdown hidden" id="wl-filter-dropdown">
+            <div class="wl-filter-item active" data-filter="all">
+              <span style="width:12px"></span>
+              <span>Все тикеры</span>
+            </div>
+            <div class="wl-filter-item" data-filter="red">
+              <span class="wl-flag-dot" style="background:#ef5350"></span>
+              <span>Красный список</span>
+            </div>
+            <div class="wl-filter-item" data-filter="green">
+              <span class="wl-flag-dot" style="background:#26a69a"></span>
+              <span>Зеленый список</span>
+            </div>
+            <div class="wl-filter-item" data-filter="yellow">
+              <span class="wl-flag-dot" style="background:#ffb300"></span>
+              <span>Желтый список</span>
+            </div>
+          </div>
         </div>
         <div class="wl-columns-header" id="wl-columns-header">
           <div class="wl-col wl-col-symbol" data-col="symbol">Инструмент<div class="wl-col-resize" data-col="symbol"></div></div>

@@ -204,22 +204,26 @@
   background: var(--bg-primary);
   border-radius: var(--radius);
   padding: 2px;
+  margin-left: 8px;
 }
 
 .ch-ind-btn {
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   padding: 2px 6px;
   font-size: 10px;
   cursor: pointer;
   border-radius: 3px;
   transition: all var(--transition);
+  opacity: 0.8;
 }
 
 .ch-ind-btn:hover {
   color: var(--text-primary);
   background: var(--bg-tertiary);
+  opacity: 1;
+  box-shadow: 0 0 6px var(--accent-blue);
 }
 
 .ch-ind-btn.active {
