@@ -22,7 +22,7 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
-active_streams = {}
+active_streams = set()
 SETTINGS_FILE = os.path.join(PROJECT_ROOT, "settings.json")
 
 
@@ -152,7 +152,7 @@ def on_subscribe(data):
         logger.info(f"[WS] Client {request.sid} joined room {room}")
 
         if room not in active_streams:
-            active_streams[room] = True
+            active_streams.add(room)
             logger.info(f"[WS] Starting new stream for {room}")
 
             source = ModuleRegistry.get_data_source(source_name)

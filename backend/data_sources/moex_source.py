@@ -170,7 +170,6 @@ class MoexSource(IDataSource):
 
                         if last_idx is not None and row[last_idx] is not None:
                             price = float(row[last_idx])
-                            open_price = float(row[open_idx]) if open_idx is not None and row[open_idx] is not None else price
                             high = float(row[high_idx]) if high_idx is not None and row[high_idx] is not None else price
                             low = float(row[low_idx]) if low_idx is not None and row[low_idx] is not None else price
                             volume = int(row[vol_idx]) if vol_idx is not None and row[vol_idx] is not None else 0

@@ -3,7 +3,7 @@ import { WSClient } from "./ws-client.js";
 import { LayoutManager } from "./layout-manager.js";
 import { generateId, log } from "./utils.js";
 import { calcIndicator, mergeIndicators, loadCustomIndicators } from "./indicators.js";
-import { loadTickers, saveTickers, addTicker, removeTicker, loadFlags, saveFlags, toggleFlag, getTickerFlag, refreshAllSymbolDropdowns } from "./tickers.js";
+import { loadTickers, saveTickers, addTicker, removeTicker, loadFlags, toggleFlag, getTickerFlag, refreshAllSymbolDropdowns } from "./tickers.js";
 import { loadFromServer } from "./storage.js";
 
 let selectedTimeframe = "1h";
@@ -76,17 +76,27 @@ function createWatchlistItemEl(ticker, source) {
   return div;
 }
 
+const BOARD_LABELS = { TQBR: "Акции", FORTS: "Фьючерсы" };
+
 function renderWatchlist() {
   const container = document.getElementById("watchlist-items");
   container.innerHTML = "";
   const list = loadTickers();
-  list.forEach(({ ticker, source }) => {
-    if (currentFilter !== "all") {
-      const flag = getTickerFlag(ticker);
-      if (flag !== currentFilter) return;
-    }
-    container.appendChild(createWatchlistItemEl(ticker, source || "moex"));
-  });
+  const groups = {};
+  for (const t of list) {
+    const board = t.board || "TQBR";
+    if (currentFilter !== "all" && getTickerFlag(t.ticker) !== currentFilter) continue;
+    (groups[board] || (groups[board] = [])).push(t);
+  }
+  for (const board of ["TQBR", "FORTS"]) {
+    const items = groups[board];
+    if (!items || items.length === 0) continue;
+    const header = document.createElement("div");
+    header.className = "wl-group-header";
+    header.textContent = BOARD_LABELS[board] || board;
+    container.appendChild(header);
+    items.forEach(t => container.appendChild(createWatchlistItemEl(t.ticker, t.source || "moex")));
+  }
   refreshAllSymbolDropdowns();
   applyColumnWidths(loadColumnWidths());
   updateWatchlistPrices();
@@ -309,11 +319,22 @@ if (changeCol) {
       sortMode = "asc";
     }
 
-    list.sort((a, b) => {
-      const aVal = priceChanges[a.ticker] ?? -Infinity;
-      const bVal = priceChanges[b.ticker] ?? -Infinity;
-      return sortMode === "asc" ? aVal - bVal : bVal - aVal;
+    const groups = {};
+    list.forEach(t => {
+      const b = t.board || "TQBR";
+      (groups[b] || (groups[b] = [])).push(t);
     });
+    list.length = 0;
+    for (const board of ["TQBR", "FORTS"]) {
+      const g = groups[board];
+      if (!g) continue;
+      g.sort((a, b) => {
+        const aVal = priceChanges[a.ticker] ?? -Infinity;
+        const bVal = priceChanges[b.ticker] ?? -Infinity;
+        return sortMode === "asc" ? aVal - bVal : bVal - aVal;
+      });
+      list.push(...g);
+    }
 
     saveTickers();
     renderWatchlist();

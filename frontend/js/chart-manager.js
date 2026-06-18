@@ -11,7 +11,6 @@ export class ChartManager {
       rsi: "#2962FF", macd: "#FF6D00", macd_signal: "#9C27B0",
       macd_hist: "#787B86", sma: "#e91e63", poc: "#FF5722", poc_day: "#2962FF"
     };
-    this.showVolume = true;
     this._activeTool = "crosshair";
     this.activeChartId = null;
     this._magnetOn = false;

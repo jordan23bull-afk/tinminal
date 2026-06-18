@@ -52,28 +52,11 @@ export class WSClient {
     });
   }
 
-  disconnect() {
-    if (this.socket) {
-      this.socket.disconnect();
-      this.socket = null;
-    }
-    this.connected = false;
-    this.subscriptions.clear();
-  }
-
   subscribe(symbol, timeframe, source = "moex") {
     const room = `${symbol}_${timeframe}`;
     this.subscriptions.set(room, { symbol, timeframe, source });
     if (this.connected) {
       this.socket.emit("subscribe", { symbol, timeframe, source });
-    }
-  }
-
-  unsubscribe(symbol, timeframe) {
-    const room = `${symbol}_${timeframe}`;
-    this.subscriptions.delete(room);
-    if (this.connected) {
-      this.socket.emit("unsubscribe", { symbol, timeframe });
     }
   }
 

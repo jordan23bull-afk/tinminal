@@ -1,20 +1,31 @@
 const STORAGE_KEY = "trading-dashboard-tickers";
 const FLAGS_KEY = "trading-dashboard-flags";
 
+const FORTS_MONTHS = new Set("FGHJKMNQUVXZ");
+const FORTS_EXACT = new Set(["IMOEXF", "RTS", "RI", "BR"]);
+
+function detectBoard(ticker) {
+  const t = ticker.toUpperCase();
+  if (FORTS_EXACT.has(t)) return "FORTS";
+  if (/^[A-Z]{2,5}[FGHJKMNQUVXZ]\d$/.test(t)) return "FORTS";
+  if (/IMOEX|MOEXF/.test(t)) return "FORTS";
+  return "TQBR";
+}
+
 const DEFAULT_TICKERS = [
-  { ticker: "SBER", name: "Сбербанк", source: "moex" },
-  { ticker: "GAZP", name: "Газпром", source: "moex" },
-  { ticker: "LKOH", name: "Лукойл", source: "moex" },
-  { ticker: "YDEX", name: "Яндекс", source: "moex" },
-  { ticker: "GMKN", name: "Норникель", source: "moex" },
-  { ticker: "ROSN", name: "Роснефть", source: "moex" },
-  { ticker: "SNGS", name: "Сургутнефтегаз", source: "moex" },
-  { ticker: "VTBR", name: "ВТБ", source: "moex" },
-  { ticker: "WUSH", name: "Wildberries", source: "moex" },
-  { ticker: "PHOR", name: "ФосАгро", source: "moex" },
-  { ticker: "SBERP", name: "Сбербанк-П", source: "moex" },
-  { ticker: "SMLT", name: "Самолёт", source: "moex" },
-  { ticker: "TATN", name: "Татнефть", source: "moex" },
+  { ticker: "SBER", name: "Сбербанк", source: "moex", board: "TQBR" },
+  { ticker: "GAZP", name: "Газпром", source: "moex", board: "TQBR" },
+  { ticker: "LKOH", name: "Лукойл", source: "moex", board: "TQBR" },
+  { ticker: "YDEX", name: "Яндекс", source: "moex", board: "TQBR" },
+  { ticker: "GMKN", name: "Норникель", source: "moex", board: "TQBR" },
+  { ticker: "ROSN", name: "Роснефть", source: "moex", board: "TQBR" },
+  { ticker: "SNGS", name: "Сургутнефтегаз", source: "moex", board: "TQBR" },
+  { ticker: "VTBR", name: "ВТБ", source: "moex", board: "TQBR" },
+  { ticker: "WUSH", name: "Wildberries", source: "moex", board: "TQBR" },
+  { ticker: "PHOR", name: "ФосАгро", source: "moex", board: "TQBR" },
+  { ticker: "SBERP", name: "Сбербанк-П", source: "moex", board: "TQBR" },
+  { ticker: "SMLT", name: "Самолёт", source: "moex", board: "TQBR" },
+  { ticker: "TATN", name: "Татнефть", source: "moex", board: "TQBR" },
 ];
 
 let _tickers = null;
@@ -23,7 +34,16 @@ function loadTickers() {
   if (_tickers) return _tickers;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) { _tickers = JSON.parse(raw); return _tickers; }
+    if (raw) {
+      _tickers = JSON.parse(raw);
+      let changed = false;
+      _tickers.forEach(t => {
+        const correct = detectBoard(t.ticker);
+        if (t.board !== correct) { t.board = correct; changed = true; }
+      });
+      if (changed) saveTickers();
+      return _tickers;
+    }
   } catch {}
   _tickers = DEFAULT_TICKERS.map(t => ({ ...t }));
   return _tickers;
@@ -36,14 +56,13 @@ function saveTickers() {
 function addTicker(ticker, name) {
   ticker = ticker.toUpperCase().trim();
   if (!ticker || _tickers.some(t => t.ticker === ticker)) return false;
-  _tickers.push({ ticker, name: name || ticker, source: "moex" });
+  _tickers.push({ ticker, name: name || ticker, source: "moex", board: detectBoard(ticker) });
   saveTickers();
   return true;
 }
 
 function removeTicker(ticker) {
   _tickers = _tickers.filter(t => t.ticker !== ticker);
-  saveTickers();
 }
 
 function loadFlags() {
@@ -91,4 +110,4 @@ function refreshAllSymbolDropdowns() {
   });
 }
 
-export { loadTickers, saveTickers, addTicker, removeTicker, loadFlags, saveFlags, toggleFlag, getTickerFlag, buildSymbolItemEl, refreshAllSymbolDropdowns };
+export { loadTickers, saveTickers, addTicker, removeTicker, loadFlags, toggleFlag, getTickerFlag, buildSymbolItemEl, refreshAllSymbolDropdowns };
