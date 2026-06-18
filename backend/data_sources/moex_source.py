@@ -12,6 +12,7 @@ from core.registry import ModuleRegistry
 BOARDS = {
     "shares": {"engine": "stock", "market": "shares", "board": "TQBR"},
     "futures": {"engine": "futures", "market": "forts", "board": "RFUD"},
+    "index": {"engine": "stock", "market": "index", "board": "SNDX"},
 }
 
 TF_MAP = {
@@ -36,10 +37,15 @@ class MoexSource(IDataSource):
     def _resolve_ticker(self, symbol):
         return symbol.upper()
 
+    INDEX_TICKERS = {"IMOEX", "IMOEX2", "MOEX", "MOEX2", "RTSI", "RTSI2", "MOEXFN", "MOEXOG", "MOEXMM", "MOEXCN", "MOEXEL", "MOEXFN2", "MOEXOG2", "MOEXMM2", "MOEXCN2", "MOEXEL2"}
+
     def _parse_symbol(self, symbol):
-        if symbol.upper().startswith("FUT:"):
-            return symbol[4:], "futures"
-        return symbol, "shares"
+        s = symbol.upper()
+        if s.startswith("FUT:"):
+            return s[4:], "futures"
+        if s in self.INDEX_TICKERS or s.endswith("X") and s.startswith("IMO"):
+            return s, "index"
+        return s, "shares"
 
     def _iss_url(self, board_type, ticker, endpoint):
         b = BOARDS[board_type]
@@ -162,11 +168,11 @@ class MoexSource(IDataSource):
 
                     if md_list and md_cols:
                         row = md_list[0]
-                        last_idx = md_cols.index("LAST") if "LAST" in md_cols else None
-                        open_idx = md_cols.index("OPEN") if "OPEN" in md_cols else None
+                        last_idx = md_cols.index("LAST") if "LAST" in md_cols else md_cols.index("LASTVALUE") if "LASTVALUE" in md_cols else None
+                        open_idx = md_cols.index("OPEN") if "OPEN" in md_cols else md_cols.index("OPENVALUE") if "OPENVALUE" in md_cols else None
                         high_idx = md_cols.index("HIGH") if "HIGH" in md_cols else None
                         low_idx = md_cols.index("LOW") if "LOW" in md_cols else None
-                        vol_idx = md_cols.index("VOLTODAY") if "VOLTODAY" in md_cols else None
+                        vol_idx = md_cols.index("VOLTODAY") if "VOLTODAY" in md_cols else md_cols.index("VALTODAY") if "VALTODAY" in md_cols else None
 
                         if last_idx is not None and row[last_idx] is not None:
                             price = float(row[last_idx])
@@ -212,6 +218,10 @@ class MoexSource(IDataSource):
                             first_poll = False
                             print(f"[MOEX] {ticker}: no shares data, trying futures")
                             continue
+                        if active_board == "futures":
+                            active_board = "index"
+                            print(f"[MOEX] {ticker}: no futures data, trying index")
+                            continue
                         print(f"[MOEX] {ticker}: no market data returned")
                 except Exception as e:
                     print(f"[MOEX] Poll error for {ticker}: {e}")
@@ -244,13 +254,15 @@ class MoexSource(IDataSource):
             md_list = data[1].get("marketdata", [])
             for row in md_list:
                 ticker = row.get("SECID")
-                price = row.get("LAST")
+                price = row.get("LAST") or row.get("LASTVALUE")
                 if not ticker or price is None:
                     continue
+                change = row.get("LASTCHANGE") or row.get("LASTCHANGEPRC")
+                change_pct = row.get("LASTTOPREVPRICE") or row.get("LASTCHANGETOOPENPRC")
                 result[ticker.upper()] = {
                     "price": float(price),
-                    "change": float(row["LASTCHANGE"]) if row.get("LASTCHANGE") is not None else None,
-                    "changePct": float(row["LASTTOPREVPRICE"]) if row.get("LASTTOPREVPRICE") is not None else None,
+                    "change": float(change) if change is not None else None,
+                    "changePct": float(change_pct) if change_pct is not None else None,
                 }
 
         missing = [s for s in symbols if self._resolve_ticker(s).upper() not in result]
@@ -265,13 +277,38 @@ class MoexSource(IDataSource):
             if isinstance(data, list) and len(data) >= 2:
                 for row in data[1].get("marketdata", []):
                     ticker = row.get("SECID")
-                    price = row.get("LAST")
+                    price = row.get("LAST") or row.get("LASTVALUE")
                     if not ticker or price is None:
                         continue
+                    change = row.get("LASTCHANGE") or row.get("LASTCHANGEPRC")
+                    change_pct = row.get("LASTTOPREVPRICE") or row.get("LASTCHANGETOOPENPRC")
                     result[ticker.upper()] = {
                         "price": float(price),
-                        "change": float(row["LASTCHANGE"]) if row.get("LASTCHANGE") is not None else None,
-                        "changePct": float(row["LASTTOPREVPRICE"]) if row.get("LASTTOPREVPRICE") is not None else None,
+                        "change": float(change) if change is not None else None,
+                        "changePct": float(change_pct) if change_pct is not None else None,
+                    }
+
+        missing = [s for s in symbols if self._resolve_ticker(s).upper() not in result]
+        if missing:
+            idx_tickers = [self._resolve_ticker(s).upper() for s in missing]
+            b = BOARDS["index"]
+            url = f"https://iss.moex.com/iss/engines/{b['engine']}/markets/{b['market']}/boards/{b['board']}/securities.json"
+            url += f"?iss.meta=off&iss.json=extended&securities={','.join(idx_tickers)}"
+            resp = requests.get(url, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, list) and len(data) >= 2:
+                for row in data[1].get("marketdata", []):
+                    ticker = row.get("SECID")
+                    price = row.get("LAST") or row.get("LASTVALUE")
+                    if not ticker or price is None:
+                        continue
+                    change = row.get("LASTCHANGE") or row.get("LASTCHANGEPRC")
+                    change_pct = row.get("LASTTOPREVPRICE") or row.get("LASTCHANGETOOPENPRC")
+                    result[ticker.upper()] = {
+                        "price": float(price),
+                        "change": float(change) if change is not None else None,
+                        "changePct": float(change_pct) if change_pct is not None else None,
                     }
         return result
 

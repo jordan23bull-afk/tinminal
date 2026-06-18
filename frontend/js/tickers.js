@@ -3,12 +3,14 @@ const FLAGS_KEY = "trading-dashboard-flags";
 
 const FORTS_MONTHS = new Set("FGHJKMNQUVXZ");
 const FORTS_EXACT = new Set(["IMOEXF", "RTS", "RI", "BR"]);
+const INDEX_TICKERS = new Set(["IMOEX", "IMOEX2", "MOEX", "MOEX2", "RTSI", "RTSI2"]);
 
 function detectBoard(ticker) {
   const t = ticker.toUpperCase();
+  if (INDEX_TICKERS.has(t) || (t.startsWith("IMO") && t.endsWith("X"))) return "INDEX";
   if (FORTS_EXACT.has(t)) return "FORTS";
   if (/^[A-Z]{2,5}[FGHJKMNQUVXZ]\d$/.test(t)) return "FORTS";
-  if (/IMOEX|MOEXF/.test(t)) return "FORTS";
+  if (/MOEXF/.test(t)) return "FORTS";
   return "TQBR";
 }
 

@@ -76,7 +76,7 @@ function createWatchlistItemEl(ticker, source) {
   return div;
 }
 
-const BOARD_LABELS = { TQBR: "Акции", FORTS: "Фьючерсы" };
+const BOARD_LABELS = { TQBR: "Акции", FORTS: "Фьючерсы", INDEX: "Индексы" };
 
 function renderWatchlist() {
   const container = document.getElementById("watchlist-items");
@@ -88,7 +88,7 @@ function renderWatchlist() {
     if (currentFilter !== "all" && getTickerFlag(t.ticker) !== currentFilter) continue;
     (groups[board] || (groups[board] = [])).push(t);
   }
-  for (const board of ["TQBR", "FORTS"]) {
+  for (const board of ["TQBR", "FORTS", "INDEX"]) {
     const items = groups[board];
     if (!items || items.length === 0) continue;
     const header = document.createElement("div");
@@ -325,7 +325,7 @@ if (changeCol) {
       (groups[b] || (groups[b] = [])).push(t);
     });
     list.length = 0;
-    for (const board of ["TQBR", "FORTS"]) {
+  for (const board of ["TQBR", "FORTS", "INDEX"]) {
       const g = groups[board];
       if (!g) continue;
       g.sort((a, b) => {
