@@ -29,6 +29,7 @@ export class ChartUI {
   showContextMenu(e, chartId, price) {
     const existing = this.m.alerts.find(a => a.chartId === chartId && Math.abs(a.price - price) < 0.5);
     let html = "";
+    html += `<div class="hline-ctx-item" data-action="edit-line">Изменить</div>`;
     if (!existing) {
       html += `<div class="hline-ctx-item" data-action="add-alert">Добавить алерт</div>`;
     } else {
@@ -46,6 +47,7 @@ export class ChartUI {
         if (action === "add-alert") this.m.addAlert(chartId, price);
         else if (action === "remove-alert") this.m.removeAlert(chartId, price);
         else if (action === "remove-line") this._removeLineByPrice(chartId, price);
+        else if (action === "edit-line") this._editLine(chartId, price);
         this._ctxMenu.classList.add("hidden");
       });
     });
@@ -55,6 +57,64 @@ export class ChartUI {
     const chartObj = this.m.charts.get(chartId);
     if (!chartObj) return;
     this.m._removeLineFromAll(price, chartObj.config.symbol);
+  }
+
+  _editLine(chartId, price) {
+    const chartObj = this.m.charts.get(chartId);
+    if (!chartObj) return;
+    const line = this.m._findLineByPrice(chartObj, price);
+    const opts = line?._opts || {};
+    this.showLineSettingsDialog(chartId, price, (newOpts) => {
+      this.m._updateLineColor(chartId, price, newOpts.color, newOpts.lineWidth, newOpts.lineStyle);
+    }, opts);
+  }
+
+  showLineSettingsDialog(chartId, price, onApply, currentOpts = {}) {
+    const s = currentOpts;
+    const overlay = document.createElement("div");
+    overlay.className = "ind-modal-overlay";
+    const modal = document.createElement("div");
+    modal.className = "ind-modal";
+    modal.innerHTML = `
+      <h3>Настройки линии</h3>
+      <label>Цвет</label>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="color" id="ls-color" value="${s.color || '#2196F3'}" style="width:40px;height:26px;border:none;background:none;cursor:pointer">
+        <span id="ls-color-val" style="font-size:11px;color:var(--text-secondary)">${s.color || '#2196F3'}</span>
+      </div>
+      <label>Толщина</label>
+      <input type="number" id="ls-width" min="1" max="4" value="${s.lineWidth || 1}">
+      <label>Стиль</label>
+      <select id="ls-style">
+        <option value="0" ${s.lineStyle === 0 ? 'selected' : ''}>Сплошная</option>
+        <option value="1" ${s.lineStyle === 1 ? 'selected' : ''}>Точки</option>
+        <option value="2" ${s.lineStyle === 2 || s.lineStyle == null ? 'selected' : ''}>Штрихи</option>
+        <option value="3" ${s.lineStyle === 3 ? 'selected' : ''}>Штрих-пунктир</option>
+      </select>
+      <div class="ind-modal-btns">
+        <button class="ind-cancel">Отмена</button>
+        <button class="ind-save">Применить</button>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    modal.querySelector("#ls-color").addEventListener("input", function() {
+      modal.querySelector("#ls-color-val").textContent = this.value;
+    });
+
+    modal.querySelector(".ind-cancel").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    modal.querySelector(".ind-save").addEventListener("click", () => {
+      const opts = {
+        color: modal.querySelector("#ls-color").value,
+        lineWidth: Number(modal.querySelector("#ls-width").value) || 1,
+        lineStyle: Number(modal.querySelector("#ls-style").value),
+      };
+      overlay.remove();
+      onApply(opts);
+    });
   }
 
   buildHeader(id) {
@@ -510,9 +570,6 @@ export class ChartUI {
         }
       }
       this.m.addHorizontalLine(id, price);
-      this.m._activeTool = "crosshair";
-      document.querySelectorAll(".tool-btn[data-tool]").forEach(b => b.classList.remove("active"));
-      document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
     };
 
     const onEraser = (e) => {

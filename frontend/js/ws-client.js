@@ -1,7 +1,7 @@
 import { log } from "./utils.js";
 
 export class WSClient {
-  constructor(url = "http://localhost:5000") {
+  constructor(url = (location.protocol === "http:" || location.protocol === "https:") ? location.origin : "http://localhost:5000") {
     this.url = url;
     this.socket = null;
     this.subscriptions = new Map();

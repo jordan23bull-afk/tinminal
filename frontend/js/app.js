@@ -355,9 +355,15 @@ updateClock();
 // Tools
 document.querySelectorAll(".tool-btn[data-tool]").forEach(btn => {
   btn.addEventListener("click", () => {
+    const sameTool = btn.classList.contains("active");
     document.querySelectorAll(".tool-btn[data-tool]").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    chartManager._activeTool = btn.dataset.tool;
+    if (sameTool) {
+      document.querySelector('.tool-btn[data-tool="crosshair"]')?.classList.add("active");
+      chartManager._activeTool = "crosshair";
+    } else {
+      btn.classList.add("active");
+      chartManager._activeTool = btn.dataset.tool;
+    }
   });
 });
 
@@ -587,7 +593,12 @@ function selectLayout(count, optionIndex) {
     const symbol = chartObj.config.symbol;
     if (symbol && chartObj._horizontalLines.length > 0) {
       if (!savedLinesPerSymbol[symbol]) savedLinesPerSymbol[symbol] = [];
-      savedLinesPerSymbol[symbol].push(...chartObj._horizontalLines.map(l => l.options().price));
+      savedLinesPerSymbol[symbol].push(...chartObj._horizontalLines.map(l => ({
+        price: l.options().price,
+        color: l.options().color,
+        lineWidth: l.options().lineWidth,
+        lineStyle: l.options().lineStyle,
+      })));
     }
   }
   const savedAlerts = [...chartManager.alerts];
@@ -620,10 +631,16 @@ function selectLayout(count, optionIndex) {
   const fetches = newCharts.map(({ id }) => loadHistory(id));
   Promise.all(fetches).then(() => {
     if (myVersion !== layoutVersion) return;
-    for (const [symbol, prices] of Object.entries(savedLinesPerSymbol)) {
+    for (const [symbol, lines] of Object.entries(savedLinesPerSymbol)) {
       const chartIds = symbolToChartIds[symbol] || [];
       chartIds.forEach(chartId => {
-        prices.forEach(price => chartManager.addHorizontalLine(chartId, price));
+        lines.forEach(line => {
+          if (typeof line === "number") {
+            chartManager.addHorizontalLine(chartId, line);
+          } else {
+            chartManager.addHorizontalLine(chartId, line.price, { color: line.color, lineWidth: line.lineWidth, lineStyle: line.lineStyle });
+          }
+        });
       });
     }
     chartManager.alerts = savedAlerts.map(a => {
@@ -675,7 +692,12 @@ function saveState() {
       timeframe: chartObj.config.timeframe || "1h",
       chartType: chartObj.chartType || "candlestick",
       indicators: Object.keys(chartObj.indicators),
-      horizontalLines: chartObj._horizontalLines.map(l => l.options().price)
+      horizontalLines: chartObj._horizontalLines.map(l => ({
+        price: l.options().price,
+        color: l.options().color,
+        lineWidth: l.options().lineWidth,
+        lineStyle: l.options().lineStyle,
+      }))
     });
   }
   const state = {
@@ -766,7 +788,13 @@ function restoreState(state) {
   Promise.all(fetches).then(() => {
     for (const { id, chartCfg } of chartIds) {
       if (chartCfg.horizontalLines && chartCfg.horizontalLines.length > 0) {
-        chartCfg.horizontalLines.forEach(price => chartManager.addHorizontalLine(id, price));
+        chartCfg.horizontalLines.forEach(line => {
+          if (typeof line === "number") {
+            chartManager.addHorizontalLine(id, line);
+          } else {
+            chartManager.addHorizontalLine(id, line.price, { color: line.color, lineWidth: line.lineWidth, lineStyle: line.lineStyle });
+          }
+        });
       }
     }
     chartManager.restoreAlertColors();

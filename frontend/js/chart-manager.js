@@ -34,11 +34,17 @@ export class ChartManager {
   addAlert(chartId, price) {
     const sourceObj = this.charts.get(chartId);
     const symbol = sourceObj ? sourceObj.config.symbol : "???";
+    let lineColor = "#2196F3";
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol !== symbol) continue;
+      const line = this._findLineByPrice(chartObj, price);
+      if (line) lineColor = line._opts?.color || "#2196F3";
+    }
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol) continue;
       const exists = this.alerts.some(a => a.chartId === id && Math.abs(a.price - price) < 0.5);
       if (!exists) {
-        this.alerts.push({ chartId: id, symbol, price, id: Date.now() });
+        this.alerts.push({ chartId: id, symbol, price, id: Date.now(), lineColor });
       }
     }
     for (const a of this.alerts) {
@@ -55,6 +61,9 @@ export class ChartManager {
   removeAlert(chartId, price) {
     const sourceObj = this.charts.get(chartId);
     const symbol = sourceObj ? sourceObj.config.symbol : null;
+    let origColor = "#2196F3";
+    const matched = this.alerts.find(a => Math.abs(a.price - price) < 0.5 && (symbol ? a.symbol === symbol : a.chartId === chartId));
+    if (matched && matched.lineColor) origColor = matched.lineColor;
     this.alerts = this.alerts.filter(a => {
       if (Math.abs(a.price - price) >= 0.5) return true;
       if (symbol && a.symbol === symbol) return false;
@@ -62,10 +71,10 @@ export class ChartManager {
       return true;
     });
     this._saveAlerts();
-    this._updateLineColor(chartId, price, "#2196F3");
+    this._updateLineColor(chartId, price, origColor);
   }
 
-  _updateLineColor(chartId, price, color) {
+  _updateLineColor(chartId, price, color, lineWidth, lineStyle) {
     const sourceObj = this.charts.get(chartId);
     if (!sourceObj) return;
     const symbol = sourceObj.config.symbol;
@@ -73,10 +82,14 @@ export class ChartManager {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
       const line = this._findLineByPrice(chartObj, price);
       if (!line) continue;
+      const old = line._opts || {};
+      const newLineWidth = lineWidth != null ? lineWidth : (old.lineWidth || 1);
+      const newLineStyle = lineStyle != null ? lineStyle : (old.lineStyle ?? 2);
       chartObj.mainSeries.removePriceLine(line);
       const newLine = chartObj.mainSeries.createPriceLine({
-        price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: ""
+        price, color, lineWidth: newLineWidth, lineStyle: newLineStyle, axisLabelVisible: true, title: ""
       });
+      newLine._opts = { color, lineWidth: newLineWidth, lineStyle: newLineStyle };
       chartObj._horizontalLines = chartObj._horizontalLines.map(l => l === line ? newLine : l);
     }
   }
@@ -446,10 +459,13 @@ export class ChartManager {
     log(`Chart removed: ${id}`);
   }
 
-  addHorizontalLine(chartId, price) {
+  addHorizontalLine(chartId, price, opts = {}) {
     const sourceObj = this.charts.get(chartId);
     if (!sourceObj || !sourceObj.mainSeries) return;
     const symbol = sourceObj.config.symbol;
+    const color = opts.color || "#2196F3";
+    const lineWidth = opts.lineWidth || 1;
+    const lineStyle = opts.lineStyle ?? 2;
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
       const exists = chartObj._horizontalLines.some(l => {
@@ -458,8 +474,9 @@ export class ChartManager {
       });
       if (exists) continue;
       const line = chartObj.mainSeries.createPriceLine({
-        price, color: "#2196F3", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: ""
+        price, color, lineWidth, lineStyle, axisLabelVisible: true, title: ""
       });
+      line._opts = { color, lineWidth, lineStyle };
       chartObj._horizontalLines.push(line);
     }
     log(`Horizontal line added at ${price} for ${symbol}`);

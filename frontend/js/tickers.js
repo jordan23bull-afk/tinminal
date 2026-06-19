@@ -65,6 +65,7 @@ function addTicker(ticker, name) {
 
 function removeTicker(ticker) {
   _tickers = _tickers.filter(t => t.ticker !== ticker);
+  saveTickers();
 }
 
 function loadFlags() {
