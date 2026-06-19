@@ -459,13 +459,14 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
             const calcData = calcIndicator(indId, data.candles);
             if (calcData) indicatorData[indId] = calcData;
           }
-}
+        }
 
 
         chartManager.updateData(chartId, data.candles, indicatorData);
         if (data.candles.length > 0) {
           chartManager.checkAlerts(data.candles[data.candles.length - 1]);
         }
+        chartManager.restoreAlertColors();
       }
     } else {
       chartId = generateId();

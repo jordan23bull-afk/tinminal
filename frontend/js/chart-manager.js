@@ -23,7 +23,15 @@ export class ChartManager {
   }
 
   _loadAlerts() {
-    try { return JSON.parse(localStorage.getItem("trading-alerts") || "[]"); }
+    try {
+      const alerts = JSON.parse(localStorage.getItem("trading-alerts") || "[]");
+      const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const fresh = alerts.filter(a => a.id > weekAgo);
+      if (fresh.length !== alerts.length) {
+        localStorage.setItem("trading-alerts", JSON.stringify(fresh));
+      }
+      return fresh;
+    }
     catch { return []; }
   }
 
