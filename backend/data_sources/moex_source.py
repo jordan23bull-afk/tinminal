@@ -1,4 +1,5 @@
 import threading
+import logging
 import requests
 import sys
 import os
@@ -8,6 +9,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from core.interfaces import IDataSource
 from core.registry import ModuleRegistry
+
+logger = logging.getLogger(__name__)
 
 BOARDS = {
     "shares": {"engine": "stock", "market": "shares", "board": "TQBR"},
@@ -113,7 +116,7 @@ class MoexSource(IDataSource):
             return result[-limit:] if len(result) > limit else result
 
         except Exception as e:
-            print(f"[MOEX] Error fetching candles for {ticker}: {e}")
+            logger.error(f"[MOEX] Error fetching candles for {ticker}: {e}")
             raise
 
     def subscribe_realtime(self, symbol, timeframe, callback):
@@ -148,7 +151,7 @@ class MoexSource(IDataSource):
 
         def stream():
             nonlocal active_board
-            print(f"[MOEX] Stream started for {ticker} {timeframe}")
+            logger.info(f"[MOEX] Stream started for {ticker} {timeframe}")
             first_poll = True
             while not stop_event.is_set():
                 try:
@@ -207,24 +210,24 @@ class MoexSource(IDataSource):
                                     "close": price,
                                     "volume": current_candle["volume"],
                                 })
-                                print(f"[MOEX] {ticker}: {price} @ {candle_time} (H={current_candle['high']} L={current_candle['low']})")
+                                logger.info(f"[MOEX] {ticker}: {price} @ {candle_time} (H={current_candle['high']} L={current_candle['low']})")
                             else:
-                                print(f"[MOEX] {ticker}: no change, last={price}")
+                                logger.debug(f"[MOEX] {ticker}: no change, last={price}")
                         else:
-                            print(f"[MOEX] {ticker}: price data unavailable (market closed?)")
+                            logger.info(f"[MOEX] {ticker}: price data unavailable (market closed?)")
                     else:
                         if first_poll and active_board == "shares":
                             active_board = "futures"
                             first_poll = False
-                            print(f"[MOEX] {ticker}: no shares data, trying futures")
+                            logger.info(f"[MOEX] {ticker}: no shares data, trying futures")
                             continue
                         if active_board == "futures":
                             active_board = "index"
-                            print(f"[MOEX] {ticker}: no futures data, trying index")
+                            logger.info(f"[MOEX] {ticker}: no futures data, trying index")
                             continue
-                        print(f"[MOEX] {ticker}: no market data returned")
+                        logger.info(f"[MOEX] {ticker}: no market data returned")
                 except Exception as e:
-                    print(f"[MOEX] Poll error for {ticker}: {e}")
+                    logger.error(f"[MOEX] Poll error for {ticker}: {e}")
 
                 first_poll = False
                 stop_event.wait(3)

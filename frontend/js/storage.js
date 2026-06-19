@@ -1,5 +1,6 @@
 const SAVE_DEBOUNCE = 500;
 let _timer = null;
+let _loading = false;
 
 function _getAll() {
   const data = {};
@@ -11,6 +12,7 @@ function _getAll() {
 }
 
 function _save() {
+  if (_loading) return;
   if (_timer) clearTimeout(_timer);
   _timer = setTimeout(() => {
     fetch("/api/settings", {
@@ -22,18 +24,21 @@ function _save() {
 }
 
 export async function loadFromServer() {
+  _loading = true;
   try {
     const res = await fetch("/api/settings");
     const data = await res.json();
     if (data && typeof data === "object") {
       for (const [key, val] of Object.entries(data)) {
         if (localStorage.getItem(key) === null) {
-          localStorage.setItem(key, val);
+          _origSetItem(key, val);
         }
       }
     }
   } catch (e) {
     console.warn("Could not load settings from server:", e);
+  } finally {
+    _loading = false;
   }
 }
 

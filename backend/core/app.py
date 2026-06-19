@@ -183,7 +183,9 @@ def on_unsubscribe(data):
 
 if __name__ == "__main__":
     ModuleRegistry.auto_load(os.path.join(BACKEND_DIR, "data_sources"), "data_sources")
-    ModuleRegistry.auto_load(os.path.join(BACKEND_DIR, "indicators"), "indicators")
+    indicators_dir = os.path.join(BACKEND_DIR, "indicators")
+    if os.path.isdir(indicators_dir):
+        ModuleRegistry.auto_load(indicators_dir, "indicators")
     logger.info(f"Loaded sources: {ModuleRegistry.list_data_sources()}")
     logger.info(f"Loaded indicators: {ModuleRegistry.list_indicators()}")
     logger.info("=== Open http://localhost:5000 in browser ===")

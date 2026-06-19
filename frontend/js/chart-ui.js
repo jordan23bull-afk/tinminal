@@ -1,8 +1,8 @@
 import { log } from "./utils.js";
 import { INDICATOR_TYPES, INDICATORS, loadCustomIndicators, saveCustomIndicators, mergeIndicators, getDeletedIndicators } from "./indicators.js";
-import { loadTickers, addTicker, removeTicker, refreshAllSymbolDropdowns, buildSymbolItemEl } from "./tickers.js";
+import { loadTickers, buildSymbolItemEl } from "./tickers.js";
 
-export { refreshAllSymbolDropdowns };
+
 
 const TIMEFRAMES = [
   { tf: "1m", label: "1m" },

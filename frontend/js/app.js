@@ -3,7 +3,7 @@ import { WSClient } from "./ws-client.js";
 import { LayoutManager } from "./layout-manager.js";
 import { generateId, log } from "./utils.js";
 import { calcIndicator, mergeIndicators, loadCustomIndicators } from "./indicators.js";
-import { loadTickers, saveTickers, addTicker, removeTicker, loadFlags, toggleFlag, getTickerFlag, refreshAllSymbolDropdowns } from "./tickers.js";
+import { loadTickers, saveTickers, addTicker, removeTicker, toggleFlag, getTickerFlag, refreshAllSymbolDropdowns } from "./tickers.js";
 import { loadFromServer } from "./storage.js";
 
 let selectedTimeframe = "1h";
