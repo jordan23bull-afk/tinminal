@@ -191,7 +191,7 @@ export class ChartManager {
       const color = (custom && custom.extra && custom.extra.color) || this.indicatorColors[indId] || "#787B86";
       const lineWidth = (custom && custom.extra && custom.extra.lineWidth) || 2;
       const series = chartObj.chart.addLineSeries({
-        color, lineWidth, priceFormat: { type: "price", precision: 2, minMove: 0.01 }
+        color, lineWidth, priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: true
       });
       chartObj.indicators[indId] = series;
       chartObj.config._activeIndicators.push(indId);
@@ -287,10 +287,23 @@ export class ChartManager {
 
     const chart = LightweightCharts.createChart(body, {
       width: w, height: h,
-      layout: { background: { type: "solid", color: "#131722" }, textColor: "#d1d4dc" },
+      layout: {
+        background: { type: "solid", color: "#131722" },
+        textColor: "#d1d4dc",
+        localization: { timeZone: "Europe/Moscow" },
+      },
       grid: { vertLines: { color: "#242832" }, horzLines: { color: "#242832" } },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-      timeScale: { timeVisible: true, secondsVisible: false },
+      timeScale: {
+        timeVisible: true, secondsVisible: false,
+        timeFormatter: (time) => {
+          if (typeof time === "object" && time.year !== undefined) {
+            return `${time.year}-${String(time.month).padStart(2,"0")}-${String(time.day).padStart(2,"0")}`;
+          }
+          const d = new Date(time * 1000);
+          return d.toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+        },
+      },
       rightPriceScale: { scaleMargins: { top: 0.1, bottom: 0.25 } }
     });
 
@@ -360,11 +373,11 @@ export class ChartManager {
       case "line":
         return chart.addLineSeries({ color: "#2962FF", lineWidth: 2, priceLineVisible: true, lastValueVisible: true });
       case "area":
-        return chart.addAreaSeries({ topColor: "rgba(41, 98, 255, 0.4)", bottomColor: "rgba(41, 98, 255, 0.0)", lineColor: "#2962FF", lineWidth: 2 });
+        return chart.addAreaSeries({ topColor: "rgba(41, 98, 255, 0.4)", bottomColor: "rgba(41, 98, 255, 0.0)", lineColor: "#2962FF", lineWidth: 2, priceLineVisible: true, lastValueVisible: true });
       case "bar":
-        return chart.addBarSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false });
+        return chart.addBarSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, priceLineVisible: true, lastValueVisible: true });
       default:
-        return chart.addCandlestickSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, wickUpColor: "#26a69a", wickDownColor: "#ef5350" });
+        return chart.addCandlestickSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, wickUpColor: "#26a69a", wickDownColor: "#ef5350", priceLineVisible: true, lastValueVisible: true });
     }
   }
 
@@ -391,7 +404,7 @@ export class ChartManager {
       if (!chartObj.indicators[indName]) {
         const color = this.indicatorColors[indName] || "#787B86";
         chartObj.indicators[indName] = chartObj.chart.addLineSeries({
-          color, lineWidth: 2, priceFormat: { type: "price", precision: 2, minMove: 0.01 }
+          color, lineWidth: 2, priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: true
         });
       }
       chartObj.indicators[indName].setData(values);

@@ -347,12 +347,10 @@ if (changeCol) {
 
 // Update clock
 function updateClock() {
-  const now = new Date();
-  const ms = new Date(now.getTime() + 3 * 3600 * 1000);
-  const h = String(ms.getUTCHours()).padStart(2, "0");
-  const m = String(ms.getUTCMinutes()).padStart(2, "0");
-  const s = String(ms.getUTCSeconds()).padStart(2, "0");
-  currentTimeEl.textContent = `${h}:${m}:${s} MSK`;
+  currentTimeEl.textContent = new Date().toLocaleTimeString("ru-RU", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  }) + " " + Intl.DateTimeFormat().resolvedOptions().timeZone.replace("Europe/Moscow", "MSK");
 }
 setInterval(updateClock, 1000);
 updateClock();
@@ -793,7 +791,7 @@ function restoreState(state) {
         const lineWidth = (customInd && customInd.extra && customInd.extra.lineWidth) || 2;
         const series = chartObj.chart.addLineSeries({
           color, lineWidth,
-          priceFormat: { type: "price", precision: 2, minMove: 0.01 }
+          priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: true
         });
         chartObj.indicators[indId] = series;
       });

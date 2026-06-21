@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import logging
+import threading
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -23,6 +24,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 active_streams = set()
+_streams_lock = threading.Lock()
 SETTINGS_FILE = os.path.join(PROJECT_ROOT, "settings.json")
 
 
@@ -140,21 +142,24 @@ client_rooms = {}
 @socketio.on("connect")
 def on_connect():
     logger.info(f"Client connected: {request.sid}")
-    client_rooms[request.sid] = set()
+    with _streams_lock:
+        client_rooms[request.sid] = set()
     emit("status", {"msg": "Connected"})
 
 
 @socketio.on("disconnect")
 def on_disconnect():
-    rooms = client_rooms.pop(request.sid, set())
-    for room in rooms:
-        if room in active_streams:
+    with _streams_lock:
+        rooms = client_rooms.pop(request.sid, set())
+        rooms_to_unsub = [r for r in rooms if r in active_streams]
+        for room in rooms_to_unsub:
             active_streams.discard(room)
-            parts = room.rsplit("_", 1)
-            if len(parts) == 2:
-                symbol, timeframe = parts
-                source = ModuleRegistry.get_data_source("moex")
-                source.unsubscribe_realtime(symbol, timeframe)
+    for room in rooms_to_unsub:
+        parts = room.rsplit("_", 1)
+        if len(parts) == 2:
+            symbol, timeframe = parts
+            source = ModuleRegistry.get_data_source("moex")
+            source.unsubscribe_realtime(symbol, timeframe)
     logger.info(f"Client disconnected: {request.sid}, cleaned {len(rooms)} rooms")
 
 
@@ -169,11 +174,14 @@ def on_subscribe(data):
         logger.info(f"[WS] Subscribe request: symbol={symbol} tf={timeframe} source={source_name} room={room}")
 
         join_room(room)
-        client_rooms.setdefault(request.sid, set()).add(room)
+        with _streams_lock:
+            client_rooms.setdefault(request.sid, set()).add(room)
+            is_new = room not in active_streams
+            if is_new:
+                active_streams.add(room)
         logger.info(f"[WS] Client {request.sid} joined room {room}")
 
-        if room not in active_streams:
-            active_streams.add(room)
+        if is_new:
             logger.info(f"[WS] Starting new stream for {room}")
 
             source = ModuleRegistry.get_data_source(source_name)
@@ -197,9 +205,12 @@ def on_unsubscribe(data):
     try:
         room = f"{data['symbol']}_{data['timeframe']}"
         leave_room(room)
-        client_rooms.get(request.sid, set()).discard(room)
-        if room in active_streams:
-            active_streams.discard(room)
+        with _streams_lock:
+            client_rooms.get(request.sid, set()).discard(room)
+            is_last = room in active_streams
+            if is_last:
+                active_streams.discard(room)
+        if is_last:
             source = ModuleRegistry.get_data_source(data.get("source", "moex"))
             source.unsubscribe_realtime(data["symbol"], data["timeframe"])
         logger.info(f"Client {request.sid} unsubscribed from {room}")

@@ -29,6 +29,7 @@ TF_SECONDS = {"1m": 60, "10m": 600, "1h": 3600, "1d": 86400}
 class MoexSource(IDataSource):
     def __init__(self):
         self._stop_events = {}
+        self._lock = threading.Lock()
 
     @property
     def name(self):
@@ -104,10 +105,9 @@ class MoexSource(IDataSource):
 
             result = []
             for row in all_candles:
-                dt_naive = datetime.strptime(row["begin"], "%Y-%m-%d %H:%M:%S")
-                dt_msk = dt_naive.replace(tzinfo=timezone(timedelta(hours=3)))
+                dt = datetime.strptime(row["begin"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
                 result.append({
-                    "time": int(dt_msk.timestamp()),
+                    "time": int(dt.timestamp()),
                     "open": float(row["open"]),
                     "high": float(row["high"]),
                     "low": float(row["low"]),
@@ -128,31 +128,31 @@ class MoexSource(IDataSource):
         interval_sec = TF_SECONDS.get(timeframe, 3600)
         key = (symbol, timeframe)
 
-        if key in self._stop_events:
-            return True
-
-        stop_event = threading.Event()
-        self._stop_events[key] = stop_event
+        with self._lock:
+            if key in self._stop_events:
+                return True
+            stop_event = threading.Event()
+            self._stop_events[key] = stop_event
         last_broadcast = {"time": 0, "price": 0, "volume": 0}
         current_candle = {"open": None, "high": None, "low": None, "volume": 0}
+        vol_baseline = 0
 
-        def get_candle_time():
-            now_utc = datetime.now(timezone.utc)
-            now_msk = now_utc + timedelta(hours=3)
+        def get_candle_time(server_time):
+            ms = server_time.astimezone(timezone(timedelta(hours=3)))
             if interval_sec >= 3600:
-                aligned = now_msk.replace(minute=0, second=0, microsecond=0)
+                aligned = ms.replace(minute=0, second=0, microsecond=0)
             else:
-                msk_minutes = now_msk.hour * 60 + now_msk.minute
+                msk_minutes = ms.hour * 60 + ms.minute
                 aligned_minutes = msk_minutes - (msk_minutes % (interval_sec // 60))
                 h = aligned_minutes // 60
                 m = aligned_minutes % 60
-                aligned = now_msk.replace(hour=h, minute=m, second=0, microsecond=0)
-            return int(aligned.replace(tzinfo=timezone.utc).timestamp())
+                aligned = ms.replace(hour=h, minute=m, second=0, microsecond=0)
+            return int(aligned.timestamp())
 
         active_board = board_type
 
         def stream():
-            nonlocal active_board
+            nonlocal active_board, vol_baseline
             logger.info(f"[MOEX] Stream started for {ticker} {timeframe}")
             first_poll = True
             consecutive_errors = 0
@@ -180,6 +180,7 @@ class MoexSource(IDataSource):
                             high_idx = md_cols.index("HIGH") if "HIGH" in md_cols else None
                             low_idx = md_cols.index("LOW") if "LOW" in md_cols else None
                             vol_idx = md_cols.index("VOLTODAY") if "VOLTODAY" in md_cols else md_cols.index("VALTODAY") if "VALTODAY" in md_cols else None
+                            ts_idx = md_cols.index("SYSUPDATED") if "SYSUPDATED" in md_cols else None
 
                             if last_idx is not None and row[last_idx] is not None:
                                 price = float(row[last_idx])
@@ -187,20 +188,30 @@ class MoexSource(IDataSource):
                                 low = float(row[low_idx]) if low_idx is not None and row[low_idx] is not None else price
                                 volume = int(row[vol_idx]) if vol_idx is not None and row[vol_idx] is not None else 0
 
-                                candle_time = get_candle_time()
+                                server_time = None
+                                if ts_idx is not None and row[ts_idx]:
+                                    try:
+                                        server_time = datetime.strptime(str(row[ts_idx]), "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                                    except ValueError:
+                                        pass
+                                if server_time is None:
+                                    server_time = datetime.now(timezone.utc)
+
+                                candle_time = get_candle_time(server_time)
 
                                 if candle_time != last_broadcast["time"]:
                                     current_candle["open"] = price
                                     current_candle["high"] = price
                                     current_candle["low"] = price
                                     current_candle["volume"] = 0
+                                    vol_baseline = volume
                                 else:
                                     if current_candle["high"] is None or price > current_candle["high"]:
                                         current_candle["high"] = price
                                     if current_candle["low"] is None or price < current_candle["low"]:
                                         current_candle["low"] = price
 
-                                current_candle["volume"] = volume
+                                current_candle["volume"] = max(0, volume - vol_baseline)
 
                                 if candle_time != last_broadcast["time"] or price != last_broadcast["price"] or volume != last_broadcast["volume"]:
                                     last_broadcast["time"] = candle_time
@@ -238,7 +249,8 @@ class MoexSource(IDataSource):
                     wait_sec = min(3 * (2 ** min(consecutive_errors, 4)), 48)
                     stop_event.wait(wait_sec)
             finally:
-                self._stop_events.pop(key, None)
+                with self._lock:
+                    self._stop_events.pop(key, None)
                 logger.info(f"[MOEX] Stream ended for {ticker} {timeframe}")
 
         threading.Thread(target=stream, daemon=True).start()
@@ -296,7 +308,8 @@ class MoexSource(IDataSource):
 
     def unsubscribe_realtime(self, symbol, timeframe):
         key = (symbol, timeframe)
-        event = self._stop_events.pop(key, None)
+        with self._lock:
+            event = self._stop_events.pop(key, None)
         if event:
             event.set()
         return True
