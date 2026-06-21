@@ -235,22 +235,6 @@ export class ChartUI {
     });
     indContainer.appendChild(addIndBtn);
 
-    const clearBtn = document.createElement("button");
-    clearBtn.className = "ch-ind-btn";
-    clearBtn.textContent = "\u{1F5D1}";
-    clearBtn.title = "Удалить все объекты";
-    clearBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const symbol = chartObj.config.symbol;
-      for (const [cid, obj] of this.m.charts) {
-        if (obj.config.symbol !== symbol) continue;
-        this.m.removeAllHorizontalLines(cid);
-      }
-      this.m.alerts = this.m.alerts.filter(a => a.symbol !== symbol);
-      this.m._saveAlerts();
-    });
-    indContainer.appendChild(clearBtn);
-
     header.appendChild(symbolBtn);
     header.appendChild(tfContainer);
     header.appendChild(typeSelect);

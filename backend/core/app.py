@@ -81,8 +81,12 @@ def settings():
         return jsonify({})
     else:
         try:
+            body = request.json
+            serialized = json.dumps(body, ensure_ascii=False)
+            if len(serialized) > 10 * 1024 * 1024:
+                return jsonify({"error": "Settings too large (max 10MB)"}), 400
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-                json.dump(request.json, f, ensure_ascii=False, indent=2)
+                f.write(serialized)
             return jsonify({"ok": True})
         except Exception as e:
             logger.error(f"Settings save error: {e}")
@@ -93,6 +97,9 @@ def settings():
 def history():
     try:
         req = request.json
+        for field in ("source", "symbol", "timeframe"):
+            if field not in req:
+                return jsonify({"error": f"Missing required field: {field}"}), 400
         source = ModuleRegistry.get_data_source(req["source"])
         candles = source.get_historical_data(req["symbol"], req["timeframe"], req.get("limit", 500))
 

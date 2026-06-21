@@ -344,9 +344,10 @@ if (changeCol) {
 // Update clock
 function updateClock() {
   const now = new Date();
-  const h = String(now.getUTCHours() + 3).padStart(2, "0");
-  const m = String(now.getUTCMinutes()).padStart(2, "0");
-  const s = String(now.getUTCSeconds()).padStart(2, "0");
+  const ms = new Date(now.getTime() + 3 * 3600 * 1000);
+  const h = String(ms.getUTCHours()).padStart(2, "0");
+  const m = String(ms.getUTCMinutes()).padStart(2, "0");
+  const s = String(ms.getUTCSeconds()).padStart(2, "0");
   currentTimeEl.textContent = `${h}:${m}:${s} MSK`;
 }
 setInterval(updateClock, 1000);
@@ -371,6 +372,21 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach(btn => {
 document.getElementById("magnet-btn").addEventListener("click", function() {
   chartManager._magnetOn = !chartManager._magnetOn;
   this.classList.toggle("active", chartManager._magnetOn);
+});
+
+// Clear drawings for active chart's symbol
+document.getElementById("clear-drawings-btn").addEventListener("click", () => {
+  const activeId = chartManager.activeChartId;
+  if (!activeId) return;
+  const chartObj = chartManager.charts.get(activeId);
+  if (!chartObj) return;
+  const symbol = chartObj.config.symbol;
+  for (const [id, obj] of chartManager.charts) {
+    if (obj.config.symbol !== symbol) continue;
+    chartManager.removeAllHorizontalLines(id);
+  }
+  chartManager.alerts = chartManager.alerts.filter(a => a.symbol !== symbol);
+  chartManager._saveAlerts();
 });
 
 // Watchlist toggle

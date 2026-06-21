@@ -1,6 +1,7 @@
 import os
 import importlib
 import logging
+import threading
 from typing import Type, List
 
 from core.interfaces import IDataSource, IIndicator
@@ -12,6 +13,7 @@ class ModuleRegistry:
     _data_sources = {}
     _indicators = {}
     _source_instances = {}
+    _lock = threading.Lock()
 
     @classmethod
     def register_data_source(cls, cls_type: Type[IDataSource]):
@@ -48,9 +50,10 @@ class ModuleRegistry:
     def get_data_source(cls, name: str) -> IDataSource:
         if name not in cls._data_sources:
             raise ValueError(f"Unknown data source: {name}")
-        if name not in cls._source_instances:
-            cls._source_instances[name] = cls._data_sources[name]()
-        return cls._source_instances[name]
+        with cls._lock:
+            if name not in cls._source_instances:
+                cls._source_instances[name] = cls._data_sources[name]()
+            return cls._source_instances[name]
 
     @classmethod
     def get_indicator(cls, name: str) -> IIndicator:
