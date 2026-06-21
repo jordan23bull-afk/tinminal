@@ -9,11 +9,7 @@ export const INDICATOR_TYPES = [
     { key: "slow", label: "Медленный", default: 26 },
     { key: "signal", label: "Сигнал", default: 9 }
   ]},
-  { id: "bollinger", label: "Bollinger", params: [
-    { key: "period", label: "Период", default: 20 },
-    { key: "stddev", label: "Отклонение", default: 2 }
-  ]},
-  { id: "atr", label: "ATR", params: [{ key: "period", label: "Период", default: 14 }] },
+
   { id: "wma", label: "WMA", params: [{ key: "period", label: "Период", default: 20 }] },
   { id: "stoch", label: "Stochastic", params: [
     { key: "k", label: "%K", default: 14 },
@@ -30,7 +26,7 @@ export const INDICATOR_TYPES = [
       { value: "cross", label: "До пересечения" }
     ]}
   ]},
-  { id: "poc_day", label: "POC дня", params: [
+  { id: "poc_day", label: "D", params: [
     { key: "bins", label: "Уровни", default: 50 }
   ], extra: [
     { key: "color", label: "Цвет", type: "color", default: "#2962FF" },
@@ -65,7 +61,7 @@ export function mergeIndicators() {
     { id: "rsi", label: "RSI" },
     { id: "macd", label: "MACD" },
     { id: "sma", label: "SMA" },
-    { id: "poc_day", label: "POC дня" },
+    { id: "poc_day", label: "D" },
   ];
   INDICATORS.length = 0;
   builtins.forEach(b => {
@@ -158,29 +154,6 @@ export function calcIndicator(indId, candles) {
     const ema26 = emaCalc(closes, slow);
     return ema12.map((d, i) => ({ time: d.time, value: d.value - ema26[i].value }));
   }
-  if (indId === "bollinger" || (custom && custom.type === "bollinger")) {
-    const p = params.period || 20, mult = params.stddev || 2;
-    const upper = [], lower = [];
-    for (let i = 0; i < candles.length; i++) {
-      if (i < p - 1) { upper.push({ time: candles[i].time, value: candles[i].close }); lower.push({ time: candles[i].time, value: candles[i].close }); continue; }
-      const slice = candles.slice(i - p + 1, i + 1);
-      const avg = slice.reduce((s, x) => s + x.close, 0) / p;
-      const std = Math.sqrt(slice.reduce((s, x) => s + (x.close - avg) ** 2, 0) / p);
-      upper.push({ time: candles[i].time, value: avg + mult * std });
-      lower.push({ time: candles[i].time, value: avg - mult * std });
-    }
-    return upper;
-  }
-  if (custom && custom.type === "atr") {
-    const p = period;
-    return candles.map((c, i) => {
-      if (i === 0) return { time: c.time, value: c.high - c.low };
-      const tr = Math.max(c.high - c.low, Math.abs(c.high - candles[i-1].close), Math.abs(c.low - candles[i-1].close));
-      if (i < p) return { time: c.time, value: tr };
-      const slice = candles.slice(i - p + 1, i + 1);
-      return { time: c.time, value: slice.reduce((s, x) => s + (x.high - x.low), 0) / p };
-    });
-  }
   if (custom && custom.type === "wma") {
     const p = period;
     const denom = p * (p + 1) / 2;
@@ -192,7 +165,7 @@ export function calcIndicator(indId, candles) {
     });
   }
   if (custom && custom.type === "stoch") {
-    const kPeriod = params.k || 14, dPeriod = params.d || 3;
+    const kPeriod = params.k || 14;
     const kValues = [];
     for (let i = 0; i < candles.length; i++) {
       if (i < kPeriod - 1) { kValues.push(50); continue; }

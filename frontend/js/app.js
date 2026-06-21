@@ -109,7 +109,11 @@ function setupWatchlistItem(item) {
     item.classList.add("selected");
     const symbol = item.dataset.symbol;
     const source = item.dataset.source || "moex";
-    const activeId = chartManager.activeChartId;
+    let activeId = chartManager.activeChartId;
+    if (!activeId && chartManager.charts.size > 0) {
+      activeId = chartManager.getAllChartIds()[0];
+      chartManager.setActiveChart(activeId);
+    }
     chartManager.changeSymbol(symbol, source, activeId);
     symbolInput.value = symbol;
     sourceSelect.value = source;

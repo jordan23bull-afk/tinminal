@@ -134,15 +134,28 @@ def prices():
         return jsonify({"error": str(e)}), 500
 
 
+client_rooms = {}
+
+
 @socketio.on("connect")
 def on_connect():
     logger.info(f"Client connected: {request.sid}")
+    client_rooms[request.sid] = set()
     emit("status", {"msg": "Connected"})
 
 
 @socketio.on("disconnect")
 def on_disconnect():
-    logger.info(f"Client disconnected: {request.sid}")
+    rooms = client_rooms.pop(request.sid, set())
+    for room in rooms:
+        if room in active_streams:
+            active_streams.discard(room)
+            parts = room.rsplit("_", 1)
+            if len(parts) == 2:
+                symbol, timeframe = parts
+                source = ModuleRegistry.get_data_source("moex")
+                source.unsubscribe_realtime(symbol, timeframe)
+    logger.info(f"Client disconnected: {request.sid}, cleaned {len(rooms)} rooms")
 
 
 @socketio.on("subscribe")
@@ -156,6 +169,7 @@ def on_subscribe(data):
         logger.info(f"[WS] Subscribe request: symbol={symbol} tf={timeframe} source={source_name} room={room}")
 
         join_room(room)
+        client_rooms.setdefault(request.sid, set()).add(room)
         logger.info(f"[WS] Client {request.sid} joined room {room}")
 
         if room not in active_streams:
@@ -183,6 +197,11 @@ def on_unsubscribe(data):
     try:
         room = f"{data['symbol']}_{data['timeframe']}"
         leave_room(room)
+        client_rooms.get(request.sid, set()).discard(room)
+        if room in active_streams:
+            active_streams.discard(room)
+            source = ModuleRegistry.get_data_source(data.get("source", "moex"))
+            source.unsubscribe_realtime(data["symbol"], data["timeframe"])
         logger.info(f"Client {request.sid} unsubscribed from {room}")
     except Exception as e:
         emit("error", {"msg": str(e)})
@@ -190,10 +209,7 @@ def on_unsubscribe(data):
 
 if __name__ == "__main__":
     ModuleRegistry.auto_load(os.path.join(BACKEND_DIR, "data_sources"), "data_sources")
-    indicators_dir = os.path.join(BACKEND_DIR, "indicators")
-    if os.path.isdir(indicators_dir):
-        ModuleRegistry.auto_load(indicators_dir, "indicators")
     logger.info(f"Loaded sources: {ModuleRegistry.list_data_sources()}")
     logger.info(f"Loaded indicators: {ModuleRegistry.list_indicators()}")
     logger.info("=== Open http://localhost:5000 in browser ===")
-    socketio.run(app, host="localhost", port=5000, debug=True)
+    socketio.run(app, host="localhost", port=5000, debug=os.environ.get("FLASK_DEBUG", "0") == "1")

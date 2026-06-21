@@ -20,11 +20,11 @@ BOARDS = {
 
 TF_MAP = {
     "1m": "1", "10m": "10",
-    "1h": "60", "2h": "120", "4h": "240",
+    "1h": "60",
     "1d": "24",
 }
 
-TF_SECONDS = {"1m": 60, "10m": 600, "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400}
+TF_SECONDS = {"1m": 60, "10m": 600, "1h": 3600, "1d": 86400}
 
 class MoexSource(IDataSource):
     def __init__(self):
@@ -36,7 +36,7 @@ class MoexSource(IDataSource):
 
     @property
     def supported_timeframes(self):
-        return ["1m", "10m", "1h", "2h", "4h", "1d"]
+        return ["1m", "10m", "1h", "1d"]
 
     def _resolve_ticker(self, symbol):
         return symbol.upper()
@@ -47,7 +47,7 @@ class MoexSource(IDataSource):
         s = symbol.upper()
         if s.startswith("FUT:"):
             return s[4:], "futures"
-        if s in self.INDEX_TICKERS or s.endswith("X") and s.startswith("IMO"):
+        if s in self.INDEX_TICKERS or (s.endswith("X") and s.startswith("IMO")):
             return s, "index"
         return s, "shares"
 
@@ -154,87 +154,120 @@ class MoexSource(IDataSource):
             nonlocal active_board
             logger.info(f"[MOEX] Stream started for {ticker} {timeframe}")
             first_poll = True
-            while not stop_event.is_set():
-                try:
-                    url = self._iss_url(active_board, ticker, ".json")
-                    url += "?iss.meta=off"
+            consecutive_errors = 0
+            try:
+                while not stop_event.is_set():
+                    try:
+                        url = self._iss_url(active_board, ticker, ".json")
+                        url += "?iss.meta=off"
 
-                    resp = requests.get(url, timeout=5)
-                    resp.raise_for_status()
-                    data = resp.json()
+                        resp = requests.get(url, timeout=5)
+                        resp.raise_for_status()
+                        data = resp.json()
+                        consecutive_errors = 0
 
-                    if isinstance(data, dict):
-                        md_list = data.get("marketdata", {}).get("data", [])
-                        md_cols = data.get("marketdata", {}).get("columns", [])
-                    else:
-                        md_list = []
-                        md_cols = []
-
-                    if md_list and md_cols:
-                        row = md_list[0]
-                        last_idx = md_cols.index("LAST") if "LAST" in md_cols else md_cols.index("LASTVALUE") if "LASTVALUE" in md_cols else None
-                        open_idx = md_cols.index("OPEN") if "OPEN" in md_cols else md_cols.index("OPENVALUE") if "OPENVALUE" in md_cols else None
-                        high_idx = md_cols.index("HIGH") if "HIGH" in md_cols else None
-                        low_idx = md_cols.index("LOW") if "LOW" in md_cols else None
-                        vol_idx = md_cols.index("VOLTODAY") if "VOLTODAY" in md_cols else md_cols.index("VALTODAY") if "VALTODAY" in md_cols else None
-
-                        if last_idx is not None and row[last_idx] is not None:
-                            price = float(row[last_idx])
-                            high = float(row[high_idx]) if high_idx is not None and row[high_idx] is not None else price
-                            low = float(row[low_idx]) if low_idx is not None and row[low_idx] is not None else price
-                            volume = int(row[vol_idx]) if vol_idx is not None and row[vol_idx] is not None else 0
-
-                            candle_time = get_candle_time()
-
-                            if candle_time != last_broadcast["time"]:
-                                current_candle["open"] = price
-                                current_candle["high"] = price
-                                current_candle["low"] = price
-                                current_candle["volume"] = 0
-                            else:
-                                if current_candle["high"] is None or price > current_candle["high"]:
-                                    current_candle["high"] = price
-                                if current_candle["low"] is None or price < current_candle["low"]:
-                                    current_candle["low"] = price
-
-                            current_candle["volume"] = volume
-
-                            if candle_time != last_broadcast["time"] or price != last_broadcast["price"] or volume != last_broadcast["volume"]:
-                                last_broadcast["time"] = candle_time
-                                last_broadcast["price"] = price
-                                last_broadcast["volume"] = volume
-                                callback({
-                                    "time": candle_time,
-                                    "open": current_candle["open"],
-                                    "high": current_candle["high"],
-                                    "low": current_candle["low"],
-                                    "close": price,
-                                    "volume": current_candle["volume"],
-                                })
-                                logger.info(f"[MOEX] {ticker}: {price} @ {candle_time} (H={current_candle['high']} L={current_candle['low']})")
-                            else:
-                                logger.debug(f"[MOEX] {ticker}: no change, last={price}")
+                        if isinstance(data, dict):
+                            md_list = data.get("marketdata", {}).get("data", [])
+                            md_cols = data.get("marketdata", {}).get("columns", [])
                         else:
-                            logger.info(f"[MOEX] {ticker}: price data unavailable (market closed?)")
-                    else:
-                        if first_poll and active_board == "shares":
-                            active_board = "futures"
-                            first_poll = False
-                            logger.info(f"[MOEX] {ticker}: no shares data, trying futures")
-                            continue
-                        if active_board == "futures":
-                            active_board = "index"
-                            logger.info(f"[MOEX] {ticker}: no futures data, trying index")
-                            continue
-                        logger.info(f"[MOEX] {ticker}: no market data returned")
-                except Exception as e:
-                    logger.error(f"[MOEX] Poll error for {ticker}: {e}")
+                            md_list = []
+                            md_cols = []
 
-                first_poll = False
-                stop_event.wait(3)
+                        if md_list and md_cols:
+                            row = md_list[0]
+                            last_idx = md_cols.index("LAST") if "LAST" in md_cols else md_cols.index("LASTVALUE") if "LASTVALUE" in md_cols else None
+                            high_idx = md_cols.index("HIGH") if "HIGH" in md_cols else None
+                            low_idx = md_cols.index("LOW") if "LOW" in md_cols else None
+                            vol_idx = md_cols.index("VOLTODAY") if "VOLTODAY" in md_cols else md_cols.index("VALTODAY") if "VALTODAY" in md_cols else None
+
+                            if last_idx is not None and row[last_idx] is not None:
+                                price = float(row[last_idx])
+                                high = float(row[high_idx]) if high_idx is not None and row[high_idx] is not None else price
+                                low = float(row[low_idx]) if low_idx is not None and row[low_idx] is not None else price
+                                volume = int(row[vol_idx]) if vol_idx is not None and row[vol_idx] is not None else 0
+
+                                candle_time = get_candle_time()
+
+                                if candle_time != last_broadcast["time"]:
+                                    current_candle["open"] = price
+                                    current_candle["high"] = price
+                                    current_candle["low"] = price
+                                    current_candle["volume"] = 0
+                                else:
+                                    if current_candle["high"] is None or price > current_candle["high"]:
+                                        current_candle["high"] = price
+                                    if current_candle["low"] is None or price < current_candle["low"]:
+                                        current_candle["low"] = price
+
+                                current_candle["volume"] = volume
+
+                                if candle_time != last_broadcast["time"] or price != last_broadcast["price"] or volume != last_broadcast["volume"]:
+                                    last_broadcast["time"] = candle_time
+                                    last_broadcast["price"] = price
+                                    last_broadcast["volume"] = volume
+                                    callback({
+                                        "time": candle_time,
+                                        "open": current_candle["open"],
+                                        "high": current_candle["high"],
+                                        "low": current_candle["low"],
+                                        "close": price,
+                                        "volume": current_candle["volume"],
+                                    })
+                                    logger.info(f"[MOEX] {ticker}: {price} @ {candle_time} (H={current_candle['high']} L={current_candle['low']})")
+                                else:
+                                    logger.debug(f"[MOEX] {ticker}: no change, last={price}")
+                            else:
+                                logger.info(f"[MOEX] {ticker}: price data unavailable (market closed?)")
+                        else:
+                            if first_poll and active_board == "shares":
+                                active_board = "futures"
+                                first_poll = False
+                                logger.info(f"[MOEX] {ticker}: no shares data, trying futures")
+                                continue
+                            if active_board == "futures":
+                                active_board = "index"
+                                logger.info(f"[MOEX] {ticker}: no futures data, trying index")
+                                continue
+                            logger.info(f"[MOEX] {ticker}: no market data returned")
+                    except Exception as e:
+                        consecutive_errors += 1
+                        logger.error(f"[MOEX] Poll error for {ticker} (attempt {consecutive_errors}): {e}")
+
+                    first_poll = False
+                    wait_sec = min(3 * (2 ** min(consecutive_errors, 4)), 48)
+                    stop_event.wait(wait_sec)
+            finally:
+                self._stop_events.pop(key, None)
+                logger.info(f"[MOEX] Stream ended for {ticker} {timeframe}")
 
         threading.Thread(target=stream, daemon=True).start()
         return True
+
+    def _fetch_board_prices(self, tickers, board_type):
+        result = {}
+        if not tickers:
+            return result
+        b = BOARDS[board_type]
+        url = f"https://iss.moex.com/iss/engines/{b['engine']}/markets/{b['market']}/boards/{b['board']}/securities.json"
+        url += f"?iss.meta=off&iss.json=extended&securities={','.join(tickers)}"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        if not isinstance(data, list) or len(data) < 2:
+            return result
+        for row in data[1].get("marketdata", []):
+            ticker = row.get("SECID")
+            price = row.get("LAST") or row.get("LASTVALUE")
+            if not ticker or price is None:
+                continue
+            change = row.get("LASTCHANGE") or row.get("LASTCHANGEPRC")
+            change_pct = row.get("LASTTOPREVPRICE") or row.get("LASTCHANGETOOPENPRC")
+            result[ticker.upper()] = {
+                "price": float(price),
+                "change": float(change) if change is not None else None,
+                "changePct": float(change_pct) if change_pct is not None else None,
+            }
+        return result
 
     def get_prices(self, symbols):
         by_board = {}
@@ -247,73 +280,17 @@ class MoexSource(IDataSource):
 
         result = {}
         for board_type, tickers in by_board.items():
-            b = BOARDS[board_type]
-            url = f"https://iss.moex.com/iss/engines/{b['engine']}/markets/{b['market']}/boards/{b['board']}/securities.json"
-            url += f"?iss.meta=off&iss.json=extended&securities={','.join(tickers)}"
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            if not isinstance(data, list) or len(data) < 2:
-                continue
-            md_list = data[1].get("marketdata", [])
-            for row in md_list:
-                ticker = row.get("SECID")
-                price = row.get("LAST") or row.get("LASTVALUE")
-                if not ticker or price is None:
-                    continue
-                change = row.get("LASTCHANGE") or row.get("LASTCHANGEPRC")
-                change_pct = row.get("LASTTOPREVPRICE") or row.get("LASTCHANGETOOPENPRC")
-                result[ticker.upper()] = {
-                    "price": float(price),
-                    "change": float(change) if change is not None else None,
-                    "changePct": float(change_pct) if change_pct is not None else None,
-                }
+            result.update(self._fetch_board_prices(tickers, board_type))
 
-        missing = [s for s in symbols if self._resolve_ticker(s).upper() not in result]
-        if missing:
-            fut_tickers = [self._resolve_ticker(s).upper() for s in missing]
-            b = BOARDS["futures"]
-            url = f"https://iss.moex.com/iss/engines/{b['engine']}/markets/{b['market']}/boards/{b['board']}/securities.json"
-            url += f"?iss.meta=off&iss.json=extended&securities={','.join(fut_tickers)}"
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, list) and len(data) >= 2:
-                for row in data[1].get("marketdata", []):
-                    ticker = row.get("SECID")
-                    price = row.get("LAST") or row.get("LASTVALUE")
-                    if not ticker or price is None:
-                        continue
-                    change = row.get("LASTCHANGE") or row.get("LASTCHANGEPRC")
-                    change_pct = row.get("LASTTOPREVPRICE") or row.get("LASTCHANGETOOPENPRC")
-                    result[ticker.upper()] = {
-                        "price": float(price),
-                        "change": float(change) if change is not None else None,
-                        "changePct": float(change_pct) if change_pct is not None else None,
-                    }
+        # ponytail: fallback chain — try other boards for missing symbols
+        for fallback_board in ("futures", "index"):
+            missing = [s for s in symbols if self._resolve_ticker(s).upper() not in result]
+            if not missing:
+                break
+            result.update(self._fetch_board_prices(
+                [self._resolve_ticker(s).upper() for s in missing], fallback_board
+            ))
 
-        missing = [s for s in symbols if self._resolve_ticker(s).upper() not in result]
-        if missing:
-            idx_tickers = [self._resolve_ticker(s).upper() for s in missing]
-            b = BOARDS["index"]
-            url = f"https://iss.moex.com/iss/engines/{b['engine']}/markets/{b['market']}/boards/{b['board']}/securities.json"
-            url += f"?iss.meta=off&iss.json=extended&securities={','.join(idx_tickers)}"
-            resp = requests.get(url, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, list) and len(data) >= 2:
-                for row in data[1].get("marketdata", []):
-                    ticker = row.get("SECID")
-                    price = row.get("LAST") or row.get("LASTVALUE")
-                    if not ticker or price is None:
-                        continue
-                    change = row.get("LASTCHANGE") or row.get("LASTCHANGEPRC")
-                    change_pct = row.get("LASTTOPREVPRICE") or row.get("LASTCHANGETOOPENPRC")
-                    result[ticker.upper()] = {
-                        "price": float(price),
-                        "change": float(change) if change is not None else None,
-                        "changePct": float(change_pct) if change_pct is not None else None,
-                    }
         return result
 
     def unsubscribe_realtime(self, symbol, timeframe):

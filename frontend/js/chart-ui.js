@@ -8,8 +8,6 @@ const TIMEFRAMES = [
   { tf: "1m", label: "1m" },
   { tf: "10m", label: "10m" },
   { tf: "1h", label: "1ч" },
-  { tf: "2h", label: "H2" },
-  { tf: "4h", label: "H4" },
   { tf: "1d", label: "Д" },
 ];
 
@@ -149,6 +147,7 @@ export class ChartUI {
 
     symbolBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      this.m.setActiveChart(id);
       document.querySelectorAll(".ch-symbol-dropdown").forEach(d => {
         if (d !== symbolDropdown) d.classList.add("hidden");
       });
@@ -179,6 +178,7 @@ export class ChartUI {
         if (ticker) {
           symbolBtn.textContent = ticker;
           symbolDropdown.classList.add("hidden");
+          this.m.setActiveChart(id);
           this.m.changeSymbol(ticker, "moex", id);
         }
       }
@@ -190,6 +190,7 @@ export class ChartUI {
         const source = item.dataset.source;
         symbolBtn.textContent = ticker;
         symbolDropdown.classList.add("hidden");
+        this.m.setActiveChart(id);
         this.m.changeSymbol(ticker, source, id);
       });
     });
@@ -202,6 +203,7 @@ export class ChartUI {
       btn.textContent = t.label;
       btn.dataset.tf = t.tf;
       btn.addEventListener("click", () => {
+        this.m.setActiveChart(id);
         tfContainer.querySelectorAll(".ch-tf-btn").forEach(b => b.classList.remove("active"));
         btn.classList.add("active");
         this.m.changeTimeframe(t.tf, id);
@@ -219,6 +221,7 @@ export class ChartUI {
       typeSelect.appendChild(opt);
     });
     typeSelect.addEventListener("change", () => {
+      this.m.setActiveChart(id);
       this.m.changeChartType(id, typeSelect.value);
       this.m._updateChartConfig(id, { chartType: typeSelect.value });
     });
@@ -233,6 +236,7 @@ export class ChartUI {
     addIndBtn.title = "Создать индикатор";
     addIndBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      this.m.setActiveChart(id);
       this.showIndicatorModal(id);
     });
     indContainer.appendChild(addIndBtn);
@@ -324,6 +328,7 @@ export class ChartUI {
         btn.classList.add("active");
       }
       btn.addEventListener("click", () => {
+        this.m.setActiveChart(chartId);
         this.m._toggleIndicator(chartId, ind.id);
         btn.classList.toggle("active");
       });
@@ -609,6 +614,7 @@ export class ChartUI {
     gearBtn.title = "Настройки графика";
     gearBtn.addEventListener("click", (e) => {
       e.stopPropagation();
+      this.m.setActiveChart(id);
       this.showChartSettings(id);
     });
     body.appendChild(gearBtn);

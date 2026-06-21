@@ -71,6 +71,7 @@ export class WSClient {
   }
 
   _resubscribeAll() {
+    if (!this.connected) return;
     for (const [room, data] of this.subscriptions) {
       this.socket.emit("subscribe", data);
     }
