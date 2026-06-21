@@ -88,7 +88,8 @@ class MoexSource(IDataSource):
         tf_sec = TF_SECONDS.get(timeframe, 3600)
 
         now = datetime.now(timezone.utc)
-        from_date = (now - timedelta(seconds=limit * tf_sec)).strftime("%Y-%m-%d")
+        lookback_sec = max(limit * tf_sec, 2 * 86400)
+        from_date = (now - timedelta(seconds=lookback_sec)).strftime("%Y-%m-%d")
         to_date = now.strftime("%Y-%m-%d")
 
         try:
