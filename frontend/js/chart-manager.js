@@ -269,8 +269,7 @@ export class ChartManager {
     wrapper.appendChild(body);
     this.container.appendChild(wrapper);
 
-    wrapper.addEventListener("mouseenter", () => this.setActiveChart(id));
-    wrapper.addEventListener("mousedown", () => this.setActiveChart(id));
+    wrapper.addEventListener("pointerdown", () => this.setActiveChart(id));
 
     const chartObj = {
       chart: null, mainSeries: null, volumeSeries: null, chartType,
