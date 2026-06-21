@@ -20,10 +20,11 @@ BOARDS = {
 
 TF_MAP = {
     "1m": "1", "10m": "10",
-    "1h": "60", "1d": "24",
+    "1h": "60", "2h": "120", "4h": "240",
+    "1d": "24",
 }
 
-TF_SECONDS = {"1m": 60, "10m": 600, "1h": 3600, "1d": 86400}
+TF_SECONDS = {"1m": 60, "10m": 600, "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400}
 
 class MoexSource(IDataSource):
     def __init__(self):
@@ -35,7 +36,7 @@ class MoexSource(IDataSource):
 
     @property
     def supported_timeframes(self):
-        return ["1m", "10m", "1h", "1d"]
+        return ["1m", "10m", "1h", "2h", "4h", "1d"]
 
     def _resolve_ticker(self, symbol):
         return symbol.upper()

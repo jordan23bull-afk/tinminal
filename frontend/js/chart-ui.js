@@ -8,6 +8,8 @@ const TIMEFRAMES = [
   { tf: "1m", label: "1m" },
   { tf: "10m", label: "10m" },
   { tf: "1h", label: "1ч" },
+  { tf: "2h", label: "H2" },
+  { tf: "4h", label: "H4" },
   { tf: "1d", label: "Д" },
 ];
 
