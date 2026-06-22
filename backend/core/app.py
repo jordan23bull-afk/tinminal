@@ -149,17 +149,18 @@ def on_connect():
 
 @socketio.on("disconnect")
 def on_disconnect():
+    rooms_to_unsub = []
     with _streams_lock:
         rooms = client_rooms.pop(request.sid, set())
         rooms_to_unsub = [r for r in rooms if r in active_streams]
         for room in rooms_to_unsub:
             active_streams.discard(room)
-    for room in rooms_to_unsub:
-        parts = room.rsplit("_", 1)
-        if len(parts) == 2:
-            symbol, timeframe = parts
-            source = ModuleRegistry.get_data_source("moex")
-            source.unsubscribe_realtime(symbol, timeframe)
+        for room in rooms_to_unsub:
+            parts = room.rsplit("_", 1)
+            if len(parts) == 2:
+                symbol, timeframe = parts
+                source = ModuleRegistry.get_data_source("moex")
+                source.unsubscribe_realtime(symbol, timeframe)
     logger.info(f"Client disconnected: {request.sid}, cleaned {len(rooms)} rooms")
 
 

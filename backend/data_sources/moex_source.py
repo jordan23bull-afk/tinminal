@@ -129,7 +129,7 @@ class MoexSource(IDataSource):
         key = (symbol, timeframe)
 
         with self._lock:
-            if key in self._stop_events:
+            if key in self._stop_events and not self._stop_events[key].is_set():
                 return True
             stop_event = threading.Event()
             self._stop_events[key] = stop_event
@@ -195,7 +195,7 @@ class MoexSource(IDataSource):
                                     except ValueError:
                                         pass
                                 if server_time is None:
-                                    server_time = datetime.now(timezone.utc)
+                                    server_time = datetime.now(timezone(timedelta(hours=3))).replace(tzinfo=timezone.utc)
 
                                 candle_time = get_candle_time(server_time)
 

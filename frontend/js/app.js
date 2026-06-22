@@ -499,9 +499,7 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
       layoutManager.autoLayout(chartManager.charts.size);
     }
 
-    if (wsClient.connected) {
-      wsClient.subscribe(symbol, timeframe, source);
-    }
+    wsClient.subscribe(symbol, timeframe, source);
   } catch (e) {
     log("Load history error:", e);
     if (!forceChartId) statusText.textContent = `Error: ${e.message}`;
