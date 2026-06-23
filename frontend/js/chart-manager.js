@@ -411,15 +411,16 @@ export class ChartManager {
     }
 
     requestAnimationFrame(() => {
-      const data = chartObj.mainSeries.data();
-      if (data.length > 0) {
-        const last = data[data.length - 1];
-        const visibleCount = Math.min(100, data.length);
-        const first = data[data.length - visibleCount];
-        chartObj.chart.timeScale().setVisibleRange({ from: first.time, to: last.time });
-      } else {
-        chartObj.chart.timeScale().fitContent();
-      }
+      chartObj.chart.priceScale('right').applyOptions({ autoScale: true });
+      chartObj.chart.timeScale().fitContent();
+      setTimeout(() => {
+        const data = chartObj.mainSeries.data();
+        if (data.length > 100) {
+          const last = data[data.length - 1];
+          const first = data[data.length - 100];
+          chartObj.chart.timeScale().setVisibleRange({ from: first.time, to: last.time });
+        }
+      }, 50);
     });
   }
 
