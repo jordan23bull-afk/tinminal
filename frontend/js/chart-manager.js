@@ -411,8 +411,15 @@ export class ChartManager {
     }
 
     requestAnimationFrame(() => {
-      chartObj.chart.timeScale().fitContent();
-      chartObj.chart.timeScale().scrollToPosition(5, false);
+      const data = chartObj.mainSeries.data();
+      if (data.length > 0) {
+        const last = data[data.length - 1];
+        const visibleCount = Math.min(100, data.length);
+        const first = data[data.length - visibleCount];
+        chartObj.chart.timeScale().setVisibleRange({ from: first.time, to: last.time });
+      } else {
+        chartObj.chart.timeScale().fitContent();
+      }
     });
   }
 
