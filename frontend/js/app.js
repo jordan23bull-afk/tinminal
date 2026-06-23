@@ -8,6 +8,7 @@ import { loadFromServer } from "./storage.js";
 
 let selectedTimeframe = "1h";
 let isLoading = false;
+const activeFetchControllers = new Map();
 
 mergeIndicators();
 const chartManager = new ChartManager("charts-grid", loadHistory);
@@ -447,11 +448,19 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
     statusText.textContent = "Loading...";
   }
 
+  if (chartId) {
+    const prev = activeFetchControllers.get(chartId);
+    if (prev) prev.abort();
+  }
+  const controller = new AbortController();
+  if (chartId) activeFetchControllers.set(chartId, controller);
+
   try {
     const res = await fetch("/api/history", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, symbol, timeframe, limit: 500, indicators })
+      body: JSON.stringify({ source, symbol, timeframe, limit: 500, indicators }),
+      signal: controller.signal
     });
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -501,6 +510,7 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
 
     wsClient.subscribe(symbol, timeframe, source);
   } catch (e) {
+    if (e.name === "AbortError") return;
     log("Load history error:", e);
     if (!forceChartId) statusText.textContent = `Error: ${e.message}`;
   } finally {
@@ -906,3 +916,11 @@ async function updateWatchlistPrices() {
 
 updateWatchlistPrices();
 setInterval(updateWatchlistPrices, 5000);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  for (const [id, chartObj] of chartManager.charts) {
+    loadHistory(id, null, chartObj.config.symbol, chartObj.config.timeframe, chartObj.config.source, chartObj.chartType);
+  }
+  updateWatchlistPrices();
+});

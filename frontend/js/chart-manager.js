@@ -442,6 +442,20 @@ export class ChartManager {
     }
 
     this.checkAlerts(candle);
+
+    if (chartObj.config._lastCandles) {
+      const candles = chartObj.config._lastCandles;
+      const lastIdx = candles.length - 1;
+      if (lastIdx >= 0 && candles[lastIdx].time === candle.time) {
+        candles[lastIdx] = candle;
+      } else if (lastIdx < 0 || candles[lastIdx].time < candle.time) {
+        candles.push(candle);
+      }
+      for (const [indId, series] of Object.entries(chartObj.indicators)) {
+        const data = calcIndicator(indId, candles);
+        if (data) series.setData(data);
+      }
+    }
   }
 
   changeChartType(id, newType) {
