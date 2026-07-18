@@ -296,6 +296,9 @@ export class ChartManager {
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
       timeScale: {
         timeVisible: true, secondsVisible: false,
+        barSpacing: 8,
+        minBarSpacing: 2,
+        rightOffset: 10,
         timeFormatter: (time) => {
           if (typeof time === "object" && time.year !== undefined) {
             return `${time.year}-${String(time.month).padStart(2,"0")}-${String(time.day).padStart(2,"0")}`;
@@ -355,11 +358,12 @@ export class ChartManager {
     requestAnimationFrame(() => {
       const r = body.getBoundingClientRect();
       if (r.width > 0 && r.height > 0) chart.applyOptions({ width: r.width, height: r.height });
-      chart.timeScale().fitContent();
-      chart.timeScale().scrollToPosition(5, false);
+      // ponytail: defer fitContent until after resize settles
       setTimeout(() => {
         const r2 = body.getBoundingClientRect();
         if (r2.width > 0 && r2.height > 0) chart.applyOptions({ width: r2.width, height: r2.height });
+        chart.timeScale().fitContent();
+        chart.timeScale().scrollToPosition(5, false);
       }, 200);
     });
 
@@ -397,6 +401,13 @@ export class ChartManager {
     const chartObj = this.charts.get(id);
     if (!chartObj) { log(`Chart ${id} not found`); return; }
 
+    // ponytail: preserve zoom/pan across data reloads (e.g. tab switch)
+    const hadData = chartObj.mainSeries.data().length > 0;
+    let savedRange = null;
+    if (hadData) {
+      try { savedRange = chartObj.chart.timeScale().getVisibleRange(); } catch {}
+    }
+
     chartObj.mainSeries.setData(this._formatDataForType(candles, chartObj.chartType));
     chartObj.volumeSeries.setData(this._formatVolumeData(candles));
 
@@ -412,15 +423,20 @@ export class ChartManager {
 
     requestAnimationFrame(() => {
       chartObj.chart.priceScale('right').applyOptions({ autoScale: true });
-      chartObj.chart.timeScale().fitContent();
-      setTimeout(() => {
+      if (savedRange) {
         const data = chartObj.mainSeries.data();
-        if (data.length > 100) {
-          const last = data[data.length - 1];
-          const first = data[data.length - 100];
-          chartObj.chart.timeScale().setVisibleRange({ from: first.time, to: last.time });
+        if (data.length === 0) return;
+        const firstTime = data[0].time;
+        const lastTime = data[data.length - 1].time;
+        const from = Math.max(savedRange.from, firstTime);
+        const to = Math.min(savedRange.to, lastTime);
+        if (from < to) {
+          chartObj.chart.timeScale().setVisibleRange({ from, to });
+        } else {
+          chartObj.chart.timeScale().fitContent();
         }
-      }, 50);
+      }
+      // ponytail: first load only — fit + scroll right; updates preserve view
     });
   }
 

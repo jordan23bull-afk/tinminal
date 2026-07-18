@@ -7,3 +7,9 @@ backend/venv/
 AGENTS.md
 RULES.md
 settings.json
+candles.db
+candles.db-shm
+candles.db-wal
+node_modules/
+package-lock.json
+.troubles.txt

@@ -919,8 +919,5 @@ setInterval(updateWatchlistPrices, 5000);
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
-  for (const [id, chartObj] of chartManager.charts) {
-    loadHistory(id, null, chartObj.config.symbol, chartObj.config.timeframe, chartObj.config.source, chartObj.chartType);
-  }
   updateWatchlistPrices();
 });

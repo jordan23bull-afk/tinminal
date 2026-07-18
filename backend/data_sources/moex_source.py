@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 
 from core.interfaces import IDataSource
 from core.registry import ModuleRegistry
+from core.database import save_candles, load_candles, get_latest_time
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,18 @@ class MoexSource(IDataSource):
         lookback_sec = max(limit * tf_sec, 2 * 86400)
         from_date = (now - timedelta(seconds=lookback_sec)).strftime("%Y-%m-%d")
         to_date = now.strftime("%Y-%m-%d")
+        from_time = int((now - timedelta(seconds=lookback_sec)).timestamp())
 
+        # ponytail: try DB first — instant load for cached candles
+        db_candles = load_candles(ticker, timeframe, from_time=from_time, limit=limit)
+        latest_db = get_latest_time(ticker, timeframe)
+        stale = latest_db is None or (now.timestamp() - latest_db) > 300
+
+        if db_candles and not stale:
+            logger.info(f"[MOEX] Serving {len(db_candles)} candles from DB for {ticker} {timeframe}")
+            return db_candles
+
+        # Fetch from MOEX ISS
         try:
             all_candles = self._fetch_all_candles(ticker, interval, from_date, to_date, board_type)
 
@@ -101,11 +113,11 @@ class MoexSource(IDataSource):
                 all_candles = self._fetch_all_candles(ticker, interval, from_date, to_date, board_type)
 
             if not all_candles:
-                return []
+                return db_candles or []
 
             result = []
             for row in all_candles:
-                dt = datetime.strptime(row["begin"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone(timedelta(hours=3)))
+                dt = datetime.strptime(row["begin"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
                 result.append({
                     "time": int(dt.timestamp()),
                     "open": float(row["open"]),
@@ -115,10 +127,16 @@ class MoexSource(IDataSource):
                     "volume": int(row["volume"]),
                 })
 
+            # Save to DB
+            save_candles(ticker, timeframe, result)
+
             return result[-limit:] if len(result) > limit else result
 
         except Exception as e:
             logger.error(f"[MOEX] Error fetching candles for {ticker}: {e}")
+            if db_candles:
+                logger.info(f"[MOEX] Falling back to {len(db_candles)} cached candles from DB")
+                return db_candles
             raise
 
     def subscribe_realtime(self, symbol, timeframe, callback):
@@ -201,6 +219,7 @@ class MoexSource(IDataSource):
                                     current_candle["open"] = price
                                     current_candle["high"] = price
                                     current_candle["low"] = price
+                                    current_candle["close"] = price
                                     current_candle["volume"] = 0
                                     vol_baseline = volume
                                 else:
@@ -215,14 +234,16 @@ class MoexSource(IDataSource):
                                     last_broadcast["time"] = candle_time
                                     last_broadcast["price"] = price
                                     last_broadcast["volume"] = volume
-                                    callback({
+                                    candle = {
                                         "time": candle_time,
                                         "open": current_candle["open"],
                                         "high": current_candle["high"],
                                         "low": current_candle["low"],
                                         "close": price,
                                         "volume": current_candle["volume"],
-                                    })
+                                    }
+                                    callback(candle)
+                                    save_candles(ticker, timeframe, [candle])
                                     logger.info(f"[MOEX] {ticker}: {price} @ {candle_time} (H={current_candle['high']} L={current_candle['low']})")
                                 else:
                                     logger.debug(f"[MOEX] {ticker}: no change, last={price}")

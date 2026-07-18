@@ -10,6 +10,8 @@ export class WSClient {
       statusChange: []
     };
     this.connected = false;
+    this._pendingUpdates = new Map();
+    this._flushTimer = null;
   }
 
   connect() {
@@ -40,7 +42,11 @@ export class WSClient {
     });
 
     this.socket.on("candle_update", (data) => {
-      this._emit("candleUpdate", data.symbol, data.timeframe, data.candle);
+      const key = `${data.symbol}_${data.timeframe}`;
+      this._pendingUpdates.set(key, data);
+      if (!this._flushTimer) {
+        this._flushTimer = setTimeout(() => this._flushUpdates(), 16);
+      }
     });
 
     this.socket.on("subscribed", (data) => {
@@ -68,6 +74,14 @@ export class WSClient {
   _emit(event, ...args) {
     const list = this.handlers[event];
     if (list) list.forEach(cb => cb(...args));
+  }
+
+  _flushUpdates() {
+    this._flushTimer = null;
+    for (const [key, data] of this._pendingUpdates) {
+      this._emit("candleUpdate", data.symbol, data.timeframe, data.candle);
+    }
+    this._pendingUpdates.clear();
   }
 
   _resubscribeAll() {

@@ -10,6 +10,7 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from core.registry import ModuleRegistry
+from core.database import init_db
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -103,7 +104,7 @@ def history():
             if field not in req:
                 return jsonify({"error": f"Missing required field: {field}"}), 400
         source = ModuleRegistry.get_data_source(req["source"])
-        candles = source.get_historical_data(req["symbol"], req["timeframe"], req.get("limit", 500))
+        candles = source.get_historical_data(req["symbol"], req["timeframe"], req.get("limit", 1000))
 
         indicators = {}
         for ind_name, params in req.get("indicators", {}).items():
@@ -220,6 +221,7 @@ def on_unsubscribe(data):
 
 
 if __name__ == "__main__":
+    init_db()
     ModuleRegistry.auto_load(os.path.join(BACKEND_DIR, "data_sources"), "data_sources")
     logger.info(f"Loaded sources: {ModuleRegistry.list_data_sources()}")
     logger.info(f"Loaded indicators: {ModuleRegistry.list_indicators()}")
