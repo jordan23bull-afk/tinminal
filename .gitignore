@@ -1,33 +1,40 @@
 ```
-# Dependencies
+# Certificates and database
+backend/certs/
+candles.db
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.venv/
-venv/
+.Python
 env/
+venv/
+.venv/
+.ENV
+.ENV.local
 .env
 .env.local
 .env.*
-# Build artifacts
-build/
-dist/
-*.egg-info/
-# Logs
+
+# Logs and temp files
 *.log
-# Coverage
-.coverage
-coverage/
-htmlcov/
-# Testing
-.pytest_cache/
-.mypy_cache/
+*.tmp
+*.swp
+*.swo
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
 # Editors
 .vscode/
 .idea/
 *.swp
 *.swo
+
 # OS
 .DS_Store
 Thumbs.db

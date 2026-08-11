@@ -118,6 +118,18 @@ class TinkoffSource(IDataSource):
                 logger.info("[TINKOFF] Created cached gRPC channel")
             return self._channel_cache
 
+    def close(self):
+        """Close the cached gRPC channel on shutdown."""
+        with self._lock:
+            if self._channel_cache is not None:
+                try:
+                    self._channel_cache.close()
+                    logger.info("[TINKOFF] Closed cached gRPC channel")
+                except Exception as e:
+                    logger.error(f"[TINKOFF] Error closing channel: {e}")
+                finally:
+                    self._channel_cache = None
+
     @staticmethod
     def _normalize(symbol):
         s = symbol.strip().upper()
@@ -484,6 +496,7 @@ class TinkoffSource(IDataSource):
         """Fetch and cache the last closed daily candle for prev_close."""
         now = int(time.time())
         start_of_day = now - (now % 86400)
+        ticker = meta["ticker"]
         try:
             req = marketdata_pb2.GetCandlesRequest(
                 instrument_id=meta["figi"],
@@ -497,8 +510,8 @@ class TinkoffSource(IDataSource):
             getattr(req, "from").CopyFrom(from_ts)
             getattr(req, "to").CopyFrom(to_ts)
             chan = self._get_channel()
-                stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
-                resp = stub.GetCandles(req, metadata=self._metadata())
+            stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
+            resp = stub.GetCandles(req, metadata=self._metadata())
             listed = [self._candle_to_dict(c) for c in resp.candles]
         except Exception as e:
             logger.warning(f"[TINKOFF] prev_close fetch failed for {ticker}: {e}")
@@ -527,11 +540,11 @@ class TinkoffSource(IDataSource):
             return {}
         try:
             chan = self._get_channel()
-                stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
-                resp = stub.GetLastPrices(
-                    marketdata_pb2.GetLastPricesRequest(instrument_id=figis),
-                    metadata=self._metadata(),
-                )
+            stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
+            resp = stub.GetLastPrices(
+                marketdata_pb2.GetLastPricesRequest(instrument_id=figis),
+                metadata=self._metadata(),
+            )
         except grpc.RpcError as e:
             code = getattr(e.code(), "name", "UNKNOWN")
             logger.error(f"[TINKOFF] GetLastPrices failed ({code}): {e.details()}")

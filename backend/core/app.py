@@ -30,10 +30,10 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Rate limiting: 10 requests per second per IP for API endpoints
+# No global default_limits - each endpoint has its own specific limit
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
     storage_uri="memory://",
 )
 
@@ -361,11 +361,17 @@ def on_unsubscribe(data):
         emit("error", {"msg": str(e)})
 
 
+import atexit
+
 if __name__ == "__main__":
     init_db()
     ModuleRegistry.auto_load(os.path.join(BACKEND_DIR, "data_sources"), "data_sources")
     logger.info(f"Loaded sources: {ModuleRegistry.list_data_sources()}")
     logger.info(f"Loaded indicators: {ModuleRegistry.list_indicators()}")
+    
+    # Register cleanup on exit
+    atexit.register(ModuleRegistry.shutdown)
+    
     logger.info("=== Open http://localhost:5000 in browser ===")
     socketio.run(
         app,
