@@ -13,3 +13,6 @@ candles.db-wal
 node_modules/
 package-lock.json
 .troubles.txt
+backend/token.txt
+backend/certs/
+*.bak*

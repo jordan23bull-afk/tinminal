@@ -26,9 +26,6 @@ wsClient.on("statusChange", (status) => {
   if (status === "connected") {
     connectionStatus.textContent = "Connected";
     connectionStatus.className = "status-connected";
-    const symbol = symbolInput.value.trim().toUpperCase();
-    const source = sourceSelect.value;
-    wsClient.subscribe(symbol, selectedTimeframe, source);
   } else {
     connectionStatus.textContent = "Disconnected";
     connectionStatus.className = "status-disconnected";
@@ -42,6 +39,55 @@ wsClient.on("candleUpdate", (symbol, timeframe, candle) => {
     }
   }
 });
+
+wsClient.on("tickerError", (info) => {
+  if (!info || !info.symbol) return;
+  log("Ticker error:", info);
+  statusText.textContent = `${info.symbol}: ${info.msg || "ошибка подписки"}`;
+  setTickerStatus(info.symbol, "error");
+});
+
+wsClient.on("subscribed", (data) => {
+  if (!data || !data.symbol) return;
+  const item = document.querySelector(`.watchlist-item[data-symbol="${CSS.escape(data.symbol)}"]`);
+  if (item) {
+    const src = item.dataset.source || "tinkoff";
+    if (!src || data.source === src || data.source === "tinkoff") {
+      setTickerStatus(data.symbol, "live");
+    }
+  }
+});
+
+const TICKER_STATUS_LABEL = {
+  loading: "Загрузка",
+  live: "Live",
+  error: "Ошибка",
+  idle: "Готов",
+};
+
+function setTickerStatus(symbol, status) {
+  const item = document.querySelector(`.watchlist-item[data-symbol="${CSS.escape(symbol)}"]`);
+  if (item) {
+    item.classList.toggle("wl-loading", status === "loading");
+    item.classList.toggle("wl-error", status === "error");
+    item.classList.toggle("wl-live", status === "live");
+    item.title = TICKER_STATUS_LABEL[status] || status;
+  }
+}
+
+function syncTickerSubscriptions() {
+  const rooms = new Set();
+  for (const [, chartObj] of chartManager.charts) {
+    if (!chartObj.config.symbol || !chartObj.config.timeframe) continue;
+    rooms.add(`${chartObj.config.symbol}_${chartObj.config.timeframe}`);
+  }
+  for (const [room, sub] of wsClient.subscriptions) {
+    if (!rooms.has(room)) {
+      wsClient.unsubscribe(sub.symbol, sub.timeframe, sub.source);
+      setTickerStatus(sub.symbol, "idle");
+    }
+  }
+}
 
 wsClient.connect();
 
@@ -58,7 +104,7 @@ function createWatchlistItemEl(ticker, source) {
   const flag = getTickerFlag(ticker);
   div.dataset.flag = flag || "";
   const flagStyle = flag ? ` style="background:${flag === "red" ? "#ef5350" : flag === "green" ? "#26a69a" : "#ffb300"}"` : "";
-  div.innerHTML = `<div class="wl-col wl-col-symbol"><span class="wl-flag-left"${flagStyle}></span><div class="wl-icon moex">${ticker.charAt(0)}</div><span class="wl-symbol">${ticker}</span></div><div class="wl-col wl-col-change"><span class="wl-change">—</span></div><div class="wl-col wl-col-volume"><span class="wl-price">—</span></div>`;
+  div.innerHTML = `<div class="wl-col wl-col-symbol"><span class="wl-flag-left"${flagStyle}></span><div class="wl-icon">${ticker.charAt(0)}</div><span class="wl-symbol">${ticker}</span></div><div class="wl-col wl-col-change"><span class="wl-change">—</span></div><div class="wl-col wl-col-volume"><span class="wl-price">—</span></div>`;
   setupWatchlistItem(div);
   const flagEl = div.querySelector(".wl-flag-left");
   flagEl.addEventListener("click", (e) => {
@@ -96,7 +142,7 @@ function renderWatchlist() {
     header.className = "wl-group-header";
     header.textContent = BOARD_LABELS[board] || board;
     container.appendChild(header);
-    items.forEach(t => container.appendChild(createWatchlistItemEl(t.ticker, t.source || "moex")));
+    items.forEach(t => container.appendChild(createWatchlistItemEl(t.ticker, normalizeSource(t.source || "tinkoff"))));
   }
   refreshAllSymbolDropdowns();
   applyColumnWidths(loadColumnWidths());
@@ -109,7 +155,7 @@ function setupWatchlistItem(item) {
     document.querySelectorAll(".watchlist-item").forEach(i => i.classList.remove("selected"));
     item.classList.add("selected");
     const symbol = item.dataset.symbol;
-    const source = item.dataset.source || "moex";
+    const source = normalizeSource(item.dataset.source || "tinkoff");
     let activeId = chartManager.activeChartId;
     if (!activeId && chartManager.charts.size > 0) {
       activeId = chartManager.getAllChartIds()[0];
@@ -127,9 +173,17 @@ function setupWatchlistItem(item) {
     del.addEventListener("click", (e) => {
       e.stopPropagation();
       const ticker = item.dataset.symbol;
+      const source = item.dataset.source || "tinkoff";
+      for (const [id, chartObj] of [...chartManager.charts]) {
+        if (chartObj.config.symbol === ticker) {
+          wsClient.unsubscribe(ticker, chartObj.config.timeframe || selectedTimeframe, source);
+          chartManager.removeChart(id);
+        }
+      }
       item.remove();
       removeTicker(ticker);
       refreshAllSymbolDropdowns();
+      syncTickerSubscriptions();
     });
     item.appendChild(del);
   }
@@ -141,7 +195,7 @@ renderWatchlist();
 const addTickerBtn = document.querySelector(".watchlist-header .icon-btn-sm");
 if (addTickerBtn) {
   addTickerBtn.addEventListener("click", () => {
-    const input = prompt("Введите тикер MOEX (например TATN, ROSN, BANE):");
+    const input = prompt("Введите тикер (например TATN, ROSN, BANE):");
     if (!input) return;
     const ticker = input.toUpperCase().trim();
     if (!ticker) return;
@@ -350,8 +404,8 @@ if (changeCol) {
 function updateClock() {
   currentTimeEl.textContent = new Date().toLocaleTimeString("ru-RU", {
     hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
-    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-  }) + " " + Intl.DateTimeFormat().resolvedOptions().timeZone.replace("Europe/Moscow", "MSK");
+    timeZone: "Europe/Moscow",
+  }) + " MSK";
 }
 setInterval(updateClock, 1000);
 updateClock();
@@ -401,10 +455,9 @@ async function loadSources() {
   try {
     const res = await fetch("/api/sources");
     const data = await res.json();
-    if (data.sources && data.sources.includes("moex")) {
-      sourceSelect.value = "moex";
-    } else if (data.sources && data.sources.length > 0) {
-      sourceSelect.value = data.sources[0];
+    if (data.sources && data.sources.length > 0) {
+      const preferred = ["tinkoff", "moex"];
+      sourceSelect.value = preferred.find(s => data.sources.includes(s)) || data.sources[0];
     }
   } catch (e) {
     log("Failed to load sources:", e);
@@ -417,7 +470,7 @@ function autoLoad(indicatorName = null) {
 }
 
 async function loadHistory(forceChartId = null, indicatorName = null, symbol = null, timeframe = null, source = null, chartType = null) {
-  source = source || sourceSelect.value;
+  source = normalizeSource(source || sourceSelect.value);
   symbol = (symbol || symbolInput.value).trim().toUpperCase();
   chartType = chartType || "candlestick";
 
@@ -438,7 +491,7 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
     }
   }
 
-  const indicators = {};
+const indicators = {};
   if (indicatorName) {
     indicators[indicatorName] = {};
   }
@@ -447,6 +500,7 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
     isLoading = true;
     statusText.textContent = "Loading...";
   }
+  setTickerStatus(symbol, "loading");
 
   if (chartId) {
     const prev = activeFetchControllers.get(chartId);
@@ -488,7 +542,6 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
           }
         }
 
-
         chartManager.updateData(chartId, data.candles, indicatorData);
         if (data.candles.length > 0) {
           chartManager.checkAlerts(data.candles[data.candles.length - 1]);
@@ -509,10 +562,13 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
     }
 
     wsClient.subscribe(symbol, timeframe, source);
+    setTickerStatus(symbol, "live");
+    syncTickerSubscriptions();
   } catch (e) {
     if (e.name === "AbortError") return;
     log("Load history error:", e);
     if (!forceChartId) statusText.textContent = `Error: ${e.message}`;
+    setTickerStatus(symbol, "error");
   } finally {
     if (!forceChartId) isLoading = false;
   }
@@ -634,6 +690,7 @@ function selectLayout(count, optionIndex) {
   while (ids.length > 0) {
     chartManager.removeChart(ids.pop());
   }
+  syncTickerSubscriptions();
 
   layoutManager.setLayoutByCount(count, optionIndex);
 
@@ -714,8 +771,8 @@ function saveState() {
   const charts = [];
   for (const [id, chartObj] of chartManager.charts) {
     charts.push({
-      symbol: chartObj.config.symbol || "SBER",
-      source: chartObj.config.source || "moex",
+      symbol: chartObj.config.symbol || "",
+      source: chartObj.config.source || "tinkoff",
       timeframe: chartObj.config.timeframe || "1h",
       chartType: chartObj.chartType || "candlestick",
       indicators: Object.keys(chartObj.indicators),
@@ -755,6 +812,11 @@ function loadState() {
   }
 }
 
+// Единственный источник live-данных — tinkoff; legacy moex больше не используется.
+function normalizeSource() {
+  return "tinkoff";
+}
+
 function restoreState(state) {
   if (!state || !state.charts || state.charts.length === 0) return false;
 
@@ -762,8 +824,8 @@ function restoreState(state) {
   currentLayoutOption = state.layoutOption || 0;
   selectedTimeframe = state.timeframe || "1h";
 
-  symbolInput.value = state.symbol || "SBER";
-  sourceSelect.value = state.source || "moex";
+  symbolInput.value = state.symbol || "";
+  sourceSelect.value = normalizeSource(state.source);
 
   if (state.sync) {
     Object.assign(chartManager.sync, state.sync);
@@ -785,7 +847,7 @@ function restoreState(state) {
     const id = generateId();
     chartManager.createChart(id, {
       symbol: chartCfg.symbol,
-      source: chartCfg.source,
+      source: normalizeSource(chartCfg.source),
       timeframe: chartCfg.timeframe,
       chartType: chartCfg.chartType,
       _activeIndicators: chartCfg.indicators || []
@@ -915,9 +977,16 @@ async function updateWatchlistPrices() {
 }
 
 updateWatchlistPrices();
-setInterval(updateWatchlistPrices, 5000);
+let _pricesTimer = setInterval(updateWatchlistPrices, 5000);
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) return;
-  updateWatchlistPrices();
+  if (document.hidden) {
+    if (_pricesTimer) {
+      clearInterval(_pricesTimer);
+      _pricesTimer = null;
+    }
+  } else {
+    if (!_pricesTimer) _pricesTimer = setInterval(updateWatchlistPrices, 5000);
+    updateWatchlistPrices();
+  }
 });

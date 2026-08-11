@@ -18,12 +18,16 @@ class ModuleRegistry:
     @classmethod
     def register_data_source(cls, cls_type: Type[IDataSource]):
         name = cls_type.name.fget(None) if isinstance(cls_type.name, property) else cls_type.name
+        if name in cls._data_sources:
+            return
         cls._data_sources[name] = cls_type
         logger.info(f"[Registry] Data source loaded: {name}")
 
     @classmethod
     def register_indicator(cls, cls_type: Type[IIndicator]):
         name = cls_type.name.fget(None) if isinstance(cls_type.name, property) else cls_type.name
+        if name in cls._indicators:
+            return
         cls._indicators[name] = cls_type
         logger.info(f"[Registry] Indicator loaded: {name}")
 

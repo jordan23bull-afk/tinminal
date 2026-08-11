@@ -2,6 +2,25 @@ import { log } from "./utils.js";
 import { calcIndicator, loadCustomIndicators } from "./indicators.js";
 import { ChartUI } from "./chart-ui.js";
 
+const TF_SECONDS = {
+  "1m": 60, "5m": 300, "10m": 600, "15m": 900, "30m": 1800,
+  "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400,
+};
+
+function floorTs(ts, tfSeconds) {
+  return ts - (ts % tfSeconds);
+}
+
+function mskFullTime(time) {
+  if (typeof time === "object" && time.year !== undefined) {
+    return `${time.year}-${String(time.month).padStart(2,"0")}-${String(time.day).padStart(2,"0")}`;
+  }
+  const d = new Date(time * 1000);
+  return d.toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+const HEAVY_INDICATOR_TYPES = new Set(["poc", "poc_day"]);
+
 export class ChartManager {
   constructor(containerId, onChartChange) {
     this.container = document.getElementById(containerId);
@@ -211,7 +230,7 @@ export class ChartManager {
   }
 
   changeSymbol(symbol, source, sourceId) {
-    source = source || "moex";
+    source = source || "tinkoff";
     for (const [id, chartObj] of this.charts) {
       const update = id === sourceId || this.sync.symbol;
       if (!update) continue;
@@ -290,7 +309,10 @@ export class ChartManager {
       layout: {
         background: { type: "solid", color: "#131722" },
         textColor: "#d1d4dc",
-        localization: { timeZone: "Europe/Moscow" },
+        localization: {
+          timeZone: "Europe/Moscow",
+          timeFormatter: mskFullTime,
+        },
       },
       grid: { vertLines: { color: "#242832" }, horzLines: { color: "#242832" } },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
@@ -299,13 +321,26 @@ export class ChartManager {
         barSpacing: 8,
         minBarSpacing: 2,
         rightOffset: 10,
-        timeFormatter: (time) => {
-          if (typeof time === "object" && time.year !== undefined) {
-            return `${time.year}-${String(time.month).padStart(2,"0")}-${String(time.day).padStart(2,"0")}`;
+        tickMarkFormatter: (time, tickMarkType) => {
+          const ts = typeof time === "object" && time.year !== undefined
+            ? Date.UTC(time.year, time.month - 1, time.day) / 1000
+            : time;
+          const d = new Date(ts * 1000);
+          const opts = { timeZone: "Europe/Moscow", hour12: false };
+          if (tickMarkType === 4) {
+            opts.hour = "2-digit"; opts.minute = "2-digit"; opts.second = "2-digit";
+          } else if (tickMarkType === 3) {
+            opts.hour = "2-digit"; opts.minute = "2-digit";
+          } else if (tickMarkType === 2) {
+            opts.day = "numeric"; opts.month = "short";
+          } else if (tickMarkType === 1) {
+            opts.month = "short"; opts.year = "numeric";
+          } else {
+            opts.year = "numeric";
           }
-          const d = new Date(time * 1000);
-          return d.toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+          return d.toLocaleString("ru-RU", opts);
         },
+        timeFormatter: mskFullTime,
       },
       rightPriceScale: { scaleMargins: { top: 0.1, bottom: 0.25 } }
     });
@@ -444,6 +479,13 @@ export class ChartManager {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
 
+    const tfSeconds = TF_SECONDS[chartObj.config.timeframe] || 60;
+    const now = Math.floor(Date.now() / 1000);
+    if (candle.time > floorTs(now, tfSeconds)) {
+      log(`Ignoring future candle time=${candle.time} for ${chartObj.config.symbol}`);
+      return;
+    }
+
     try {
       if (chartObj.chartType === "candlestick" || chartObj.chartType === "bar") {
         const data = chartObj.mainSeries.data();
@@ -475,7 +517,12 @@ export class ChartManager {
       } else if (lastIdx < 0 || candles[lastIdx].time < candle.time) {
         candles.push(candle);
       }
+      const isClosed = candle.time < floorTs(now, tfSeconds);
+      const heavyTypes = new Set(loadCustomIndicators().map(c => c.type).filter(t => HEAVY_INDICATOR_TYPES.has(t)));
       for (const [indId, series] of Object.entries(chartObj.indicators)) {
+        if (HEAVY_INDICATOR_TYPES.has(indId) || heavyTypes.has(indId)) {
+          if (!isClosed) continue;
+        }
         const data = calcIndicator(indId, candles);
         if (data) series.setData(data);
       }

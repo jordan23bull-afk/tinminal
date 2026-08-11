@@ -6,8 +6,13 @@ import { loadTickers, buildSymbolItemEl } from "./tickers.js";
 
 const TIMEFRAMES = [
   { tf: "1m", label: "1m" },
+  { tf: "5m", label: "5m" },
   { tf: "10m", label: "10m" },
+  { tf: "15m", label: "15m" },
+  { tf: "30m", label: "30m" },
   { tf: "1h", label: "1ч" },
+  { tf: "2h", label: "2ч" },
+  { tf: "4h", label: "4ч" },
   { tf: "1d", label: "Д" },
 ];
 
@@ -179,7 +184,7 @@ export class ChartUI {
           symbolBtn.textContent = ticker;
           symbolDropdown.classList.add("hidden");
           this.m.setActiveChart(id);
-          this.m.changeSymbol(ticker, "moex", id);
+          this.m.changeSymbol(ticker, "tinkoff", id);
         }
       }
     });

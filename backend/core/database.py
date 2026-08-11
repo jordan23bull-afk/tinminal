@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import time
 import logging
 import threading
 
@@ -57,6 +58,17 @@ def get_latest_time(symbol, timeframe):
     conn = _get_conn()
     row = conn.execute("SELECT MAX(time) FROM candles WHERE symbol=? AND timeframe=?", (symbol, timeframe)).fetchone()
     return row[0] if row and row[0] else None
+
+
+def get_prev_session_close(symbol):
+    conn = _get_conn()
+    now = int(time.time())
+    start_of_day = now - (now % 86400)
+    row = conn.execute(
+        "SELECT close FROM candles WHERE symbol=? AND time<? ORDER BY time DESC LIMIT 1",
+        (symbol, start_of_day),
+    ).fetchone()
+    return row[0] if row and row[0] is not None else None
 
 
 def init_db():

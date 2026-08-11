@@ -327,6 +327,26 @@
   background: var(--bg-active);
 }
 
+.watchlist-item.wl-error {
+  background: rgba(239, 83, 80, 0.12);
+}
+
+.watchlist-item.wl-error .wl-symbol {
+  color: #ef5350;
+}
+
+.watchlist-item.wl-loading {
+  background: rgba(255, 179, 0, 0.08);
+}
+
+.watchlist-item.wl-loading .wl-symbol {
+  color: #ffb300;
+}
+
+.watchlist-item.wl-live .wl-symbol {
+  color: var(--accent-green);
+}
+
 .wl-icon {
   width: 24px;
   height: 24px;
@@ -338,9 +358,8 @@
   font-weight: bold;
   color: white;
   flex-shrink: 0;
+  background: #26a69a;
 }
-
-.wl-icon.moex { background: #1a73e8; }
 
 .wl-symbol {
   font-size: 11px;

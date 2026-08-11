@@ -15,19 +15,19 @@ function detectBoard(ticker) {
 }
 
 const DEFAULT_TICKERS = [
-  { ticker: "SBER", name: "Сбербанк", source: "moex", board: "TQBR" },
-  { ticker: "GAZP", name: "Газпром", source: "moex", board: "TQBR" },
-  { ticker: "LKOH", name: "Лукойл", source: "moex", board: "TQBR" },
-  { ticker: "YDEX", name: "Яндекс", source: "moex", board: "TQBR" },
-  { ticker: "GMKN", name: "Норникель", source: "moex", board: "TQBR" },
-  { ticker: "ROSN", name: "Роснефть", source: "moex", board: "TQBR" },
-  { ticker: "SNGS", name: "Сургутнефтегаз", source: "moex", board: "TQBR" },
-  { ticker: "VTBR", name: "ВТБ", source: "moex", board: "TQBR" },
-  { ticker: "WUSH", name: "Wildberries", source: "moex", board: "TQBR" },
-  { ticker: "PHOR", name: "ФосАгро", source: "moex", board: "TQBR" },
-  { ticker: "SBERP", name: "Сбербанк-П", source: "moex", board: "TQBR" },
-  { ticker: "SMLT", name: "Самолёт", source: "moex", board: "TQBR" },
-  { ticker: "TATN", name: "Татнефть", source: "moex", board: "TQBR" },
+  { ticker: "SBER", name: "Сбербанк", source: "tinkoff", board: "TQBR" },
+  { ticker: "GAZP", name: "Газпром", source: "tinkoff", board: "TQBR" },
+  { ticker: "LKOH", name: "Лукойл", source: "tinkoff", board: "TQBR" },
+  { ticker: "YDEX", name: "Яндекс", source: "tinkoff", board: "TQBR" },
+  { ticker: "GMKN", name: "Норникель", source: "tinkoff", board: "TQBR" },
+  { ticker: "ROSN", name: "Роснефть", source: "tinkoff", board: "TQBR" },
+  { ticker: "SNGS", name: "Сургутнефтегаз", source: "tinkoff", board: "TQBR" },
+  { ticker: "VTBR", name: "ВТБ", source: "tinkoff", board: "TQBR" },
+  { ticker: "WUSH", name: "Wildberries", source: "tinkoff", board: "TQBR" },
+  { ticker: "PHOR", name: "ФосАгро", source: "tinkoff", board: "TQBR" },
+  { ticker: "SBERP", name: "Сбербанк-П", source: "tinkoff", board: "TQBR" },
+  { ticker: "SMLT", name: "Самолёт", source: "tinkoff", board: "TQBR" },
+  { ticker: "TATN", name: "Татнефть", source: "tinkoff", board: "TQBR" },
 ];
 
 let _tickers = null;
@@ -42,6 +42,7 @@ function loadTickers() {
       _tickers.forEach(t => {
         const correct = detectBoard(t.ticker);
         if (t.board !== correct) { t.board = correct; changed = true; }
+        if (t.source !== "tinkoff") { t.source = "tinkoff"; changed = true; }
       });
       if (changed) saveTickers();
       return _tickers;
@@ -58,7 +59,7 @@ function saveTickers() {
 function addTicker(ticker, name) {
   ticker = ticker.toUpperCase().trim();
   if (!ticker || _tickers.some(t => t.ticker === ticker)) return false;
-  _tickers.push({ ticker, name: name || ticker, source: "moex", board: detectBoard(ticker) });
+  _tickers.push({ ticker, name: name || ticker, source: "tinkoff", board: detectBoard(ticker) });
   saveTickers();
   return true;
 }

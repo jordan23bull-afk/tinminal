@@ -9,6 +9,18 @@ echo  Local Trading Dashboard - Setup ^& Launch
 echo ============================================
 
 echo.
+echo [0/4] Checking TINKOFF_TOKEN...
+if not exist "%BACKEND%\token.txt" (
+    if "%TINKOFF_TOKEN%"=="" (
+        echo    WARNING: TINKOFF_TOKEN is not set and backend\token.txt not found.
+        echo    Set it before running:  set TINKOFF_TOKEN=your_token
+        echo    Or create file backend\token.txt containing the token.
+    ) else (
+        echo    TINKOFF_TOKEN found.
+    )
+) else (
+    echo    Token found in backend\token.txt.
+)
 echo [1/4] Creating Python virtual environment...
 if exist "%BACKEND%\venv\Scripts\python.exe" (
     echo    venv already exists, skipping.
