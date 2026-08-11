@@ -1,6 +1,6 @@
-# Local Trading Dashboard
+# Local Market Dashboard
 
-Локальный дашборд для M1-свечей биржевых инструментов (MOEX) с live-обновлением через **Tinkoff Invest API** (gRPC streaming + REST).
+Локальный дашборд для просмотра котировок и M1-свечей биржевых инструментов (MOEX) с live-обновлением через **Tinkoff Invest API** (gRPC streaming + REST).
 
 Тикеры резолвятся в рантайме через `FindInstrument` (никаких захардкоженных FIGI), live-свечи идут на один WebSocket-канал, актуальные тикеры переживают перезагрузку (localStorage + `settings.json`).
 
