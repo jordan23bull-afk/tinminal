@@ -316,7 +316,7 @@ class TinkoffSource(IDataSource):
             try:
                 with self._lock:
                     self._last_sent = set()  # reconnect => re-subscribe everything
-                channel = self._channel()
+                channel = self._get_channel()
                 stub = marketdata_pb2_grpc.MarketDataStreamServiceStub(channel)
                 self._resync_missed()
                 responses = stub.MarketDataStream(self._requests(), metadata=self._metadata())
