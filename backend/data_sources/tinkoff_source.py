@@ -74,6 +74,7 @@ class TinkoffSource(IDataSource):
         self._stream_stop = threading.Event()
         self._empty_since = None      # monotonic ts when _wanted became empty
         self._prev_close_cache = {}  # figi -> (close_value | None, ts)
+        self._channel_cache = None   # cached gRPC channel for history requests
 
     # ------------------------------------------------------------------ #
     # auth / transport
@@ -108,9 +109,26 @@ class TinkoffSource(IDataSource):
             ("x-app-version", APP_VERSION),
         ]
 
-    def _channel(self):
-        creds = grpc.ssl_channel_credentials(root_certificates=root_certificates_bytes())
-        return grpc.secure_channel(PROD_TARGET, creds, options=GRPC_OPTIONS)
+    def _get_channel(self):
+        """Get or create a cached gRPC channel for history requests."""
+        with self._lock:
+            if self._channel_cache is None:
+                creds = grpc.ssl_channel_credentials(root_certificates=root_certificates_bytes())
+                self._channel_cache = grpc.secure_channel(PROD_TARGET, creds, options=GRPC_OPTIONS)
+                logger.info("[TINKOFF] Created cached gRPC channel")
+            return self._channel_cache
+
+    def close(self):
+        """Close the cached gRPC channel on shutdown."""
+        with self._lock:
+            if self._channel_cache is not None:
+                try:
+                    self._channel_cache.close()
+                    logger.info("[TINKOFF] Closed cached gRPC channel")
+                except Exception as e:
+                    logger.error(f"[TINKOFF] Error closing channel: {e}")
+                finally:
+                    self._channel_cache = None
 
     @staticmethod
     def _normalize(symbol):
@@ -125,9 +143,9 @@ class TinkoffSource(IDataSource):
     def _find(self, ticker):
         req = instruments_pb2.FindInstrumentRequest(query=ticker)
         try:
-            with self._channel() as chan:
-                stub = instruments_pb2_grpc.InstrumentsServiceStub(chan)
-                resp = stub.FindInstrument(req, metadata=self._metadata())
+            chan = self._get_channel()
+            stub = instruments_pb2_grpc.InstrumentsServiceStub(chan)
+            resp = stub.FindInstrument(req, metadata=self._metadata())
         except grpc.RpcError as e:
             code = getattr(e.code(), "name", "UNKNOWN")
             if code == "UNAUTHENTICATED":
@@ -214,9 +232,9 @@ class TinkoffSource(IDataSource):
         getattr(req, "to").CopyFrom(to_ts)
 
         try:
-            with self._channel() as chan:
-                stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
-                resp = stub.GetCandles(req, metadata=self._metadata())
+            chan = self._get_channel()
+            stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
+            resp = stub.GetCandles(req, metadata=self._metadata())
             candles = [self._candle_to_dict(c) for c in resp.candles]
             closed = [c for c in candles if c["time"] < floor_ts(now, tf_sec)]
             if closed:
@@ -298,7 +316,7 @@ class TinkoffSource(IDataSource):
             try:
                 with self._lock:
                     self._last_sent = set()  # reconnect => re-subscribe everything
-                channel = self._channel()
+                channel = self._get_channel()
                 stub = marketdata_pb2_grpc.MarketDataStreamServiceStub(channel)
                 self._resync_missed()
                 responses = stub.MarketDataStream(self._requests(), metadata=self._metadata())
@@ -351,20 +369,20 @@ class TinkoffSource(IDataSource):
             if misses <= 0:
                 continue
             try:
-                with self._channel() as chan:
-                    stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
-                    req = marketdata_pb2.GetCandlesRequest(
-                        instrument_id=figi,
-                        interval=interval,
-                        limit=1000,
-                    )
-                    from_ts = Timestamp()
-                    from_ts.FromSeconds(last_time)
-                    to_ts = Timestamp()
-                    to_ts.FromSeconds(now)
-                    getattr(req, "from").CopyFrom(from_ts)
-                    getattr(req, "to").CopyFrom(to_ts)
-                    resp = stub.GetCandles(req, metadata=self._metadata())
+                chan = self._get_channel()
+                stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
+                req = marketdata_pb2.GetCandlesRequest(
+                    instrument_id=figi,
+                    interval=interval,
+                    limit=1000,
+                )
+                from_ts = Timestamp()
+                from_ts.FromSeconds(last_time)
+                to_ts = Timestamp()
+                to_ts.FromSeconds(now)
+                getattr(req, "from").CopyFrom(from_ts)
+                getattr(req, "to").CopyFrom(to_ts)
+                resp = stub.GetCandles(req, metadata=self._metadata())
                 listed = [self._candle_to_dict(c) for c in resp.candles]
                 latest = None
                 now_int = int(time.time())
@@ -478,6 +496,7 @@ class TinkoffSource(IDataSource):
         """Fetch and cache the last closed daily candle for prev_close."""
         now = int(time.time())
         start_of_day = now - (now % 86400)
+        ticker = meta["ticker"]
         try:
             req = marketdata_pb2.GetCandlesRequest(
                 instrument_id=meta["figi"],
@@ -490,9 +509,9 @@ class TinkoffSource(IDataSource):
             to_ts.FromSeconds(start_of_day - 1)
             getattr(req, "from").CopyFrom(from_ts)
             getattr(req, "to").CopyFrom(to_ts)
-            with self._channel() as chan:
-                stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
-                resp = stub.GetCandles(req, metadata=self._metadata())
+            chan = self._get_channel()
+            stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
+            resp = stub.GetCandles(req, metadata=self._metadata())
             listed = [self._candle_to_dict(c) for c in resp.candles]
         except Exception as e:
             logger.warning(f"[TINKOFF] prev_close fetch failed for {ticker}: {e}")
@@ -520,12 +539,12 @@ class TinkoffSource(IDataSource):
         if not figis:
             return {}
         try:
-            with self._channel() as chan:
-                stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
-                resp = stub.GetLastPrices(
-                    marketdata_pb2.GetLastPricesRequest(instrument_id=figis),
-                    metadata=self._metadata(),
-                )
+            chan = self._get_channel()
+            stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
+            resp = stub.GetLastPrices(
+                marketdata_pb2.GetLastPricesRequest(instrument_id=figis),
+                metadata=self._metadata(),
+            )
         except grpc.RpcError as e:
             code = getattr(e.code(), "name", "UNKNOWN")
             logger.error(f"[TINKOFF] GetLastPrices failed ({code}): {e.details()}")

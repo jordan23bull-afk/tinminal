@@ -72,3 +72,18 @@ class ModuleRegistry:
     @classmethod
     def list_indicators(cls) -> List[str]:
         return list(cls._indicators.keys())
+
+    @classmethod
+    def shutdown(cls):
+        """Shutdown all data source instances (close connections, channels, etc.)."""
+        with cls._lock:
+            for name, instance in cls._source_instances.items():
+                if hasattr(instance, "close"):
+                    try:
+                        instance.close()
+                        logger.info(f"[Registry] Closed data source: {name}")
+                    except Exception as e:
+                        logger.error(f"[Registry] Error closing {name}: {e}")
+            cls._source_instances.clear()
+            cls._data_sources.clear()
+            cls._indicators.clear()
