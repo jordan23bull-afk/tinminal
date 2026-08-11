@@ -7,11 +7,13 @@ import threading
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from core.registry import ModuleRegistry
-from core.database import init_db
+from core.database import init_db, get_db_connection
 from core.tls import ensure_bundle
 
 ensure_bundle()
@@ -26,7 +28,16 @@ FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
+# Rate limiting: 10 requests per second per IP for API endpoints
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",
+)
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 active_streams = set()
 _streams_lock = threading.Lock()
@@ -106,11 +117,13 @@ def health():
 
 
 @app.route("/api/sources")
+@limiter.limit("10/second")
 def list_sources():
     return jsonify({"sources": ModuleRegistry.list_data_sources()})
 
 
 @app.route("/api/indicators")
+@limiter.limit("10/second")
 def list_indicators():
     result = {}
     for name in ModuleRegistry.list_indicators():
@@ -166,6 +179,7 @@ logging.getLogger("werkzeug").addFilter(ServiceAccessFilter())
 
 
 @app.route("/api/history", methods=["POST"])
+@limiter.limit("10/second")
 def history():
     try:
         req = request.json
@@ -200,6 +214,7 @@ def history():
 
 
 @app.route("/api/prices")
+@limiter.limit("20/second")
 def prices():
     try:
         symbols = request.args.get("symbols", "").split(",")
