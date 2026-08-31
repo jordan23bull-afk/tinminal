@@ -3,6 +3,7 @@ import sys
 import time
 import threading
 import logging
+import math
 import grpc
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "gen"))
@@ -51,6 +52,11 @@ GRPC_OPTIONS = [
 
 RESYNC_INTERVAL = 2.0
 STREAM_IDLE_TIMEOUT = 30.0
+
+# History paging: Tinkoff caps GetCandles at 1000 per call. For larger requests
+# we page backwards and pause between calls to stay within rate limits.
+MAX_HISTORY_CANDLES = 3000
+HISTORY_PAGE_PAUSE = 0.4
 
 
 def floor_ts(ts, tf_seconds):
@@ -214,11 +220,15 @@ class TinkoffSource(IDataSource):
         ticker = self._normalize(symbol)
         tf_sec = TF_SECONDS.get(timeframe, 3600)
         now = int(time.time())
-        lookback = max(limit * tf_sec, 2 * 86400)
+        # Tinkoff caps each GetCandles call at 1000; for larger requests we
+        # page backwards across the time window with a small pause between
+        # calls (well within rate limits, so no ban risk).
+        target = min(int(limit), MAX_HISTORY_CANDLES)
+        lookback = max(target * tf_sec, 2 * 86400)
         from_time = now - lookback
 
         # cache check (same policy as MOEX source)
-        db_candles = load_candles(ticker, timeframe, from_time=from_time, limit=limit)
+        db_candles = load_candles(ticker, timeframe, from_time=from_time, limit=target)
         latest_db = get_latest_time(ticker, timeframe)
         stale = latest_db is None or (now - latest_db) > 300
         if db_candles and not stale:
@@ -228,28 +238,58 @@ class TinkoffSource(IDataSource):
         meta = self._resolve(ticker)
         interval = TF_MAP.get(timeframe, marketdata_pb2.CANDLE_INTERVAL_HOUR)
 
-        req = marketdata_pb2.GetCandlesRequest(
-            instrument_id=meta["figi"],
-            interval=interval,
-            limit=min(int(limit), 1000),
-        )
-        from_ts = Timestamp()
-        from_ts.FromSeconds(from_time)
-        to_ts = Timestamp()
-        to_ts.FromSeconds(now)
-        getattr(req, "from").CopyFrom(from_ts)
-        getattr(req, "to").CopyFrom(to_ts)
-
         try:
             chan = self._get_channel()
             stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
-            resp = stub.GetCandles(req, metadata=self._metadata())
-            candles = [self._candle_to_dict(c) for c in resp.candles]
-            closed = [c for c in candles if c["time"] < floor_ts(now, tf_sec)]
+
+            collected = []
+            window_to = now
+            requests_made = 0
+            max_calls = int(math.ceil(target / 1000.0)) + 1
+            while len(collected) < target and requests_made < max_calls:
+                req = marketdata_pb2.GetCandlesRequest(
+                    instrument_id=meta["figi"],
+                    interval=interval,
+                    limit=min(target, 1000),
+                )
+                from_ts = Timestamp()
+                from_ts.FromSeconds(from_time)
+                to_ts = Timestamp()
+                to_ts.FromSeconds(window_to)
+                getattr(req, "from").CopyFrom(from_ts)
+                getattr(req, "to").CopyFrom(to_ts)
+
+                resp = stub.GetCandles(req, metadata=self._metadata())
+                page = list(resp.candles)
+                requests_made += 1
+                if not page:
+                    break
+
+                collected.extend(page)
+                # move the window to just before the earliest candle we just got
+                earliest = min(c.time.seconds for c in page)
+                window_to = earliest - 1
+                if requests_made < max_calls:
+                    time.sleep(HISTORY_PAGE_PAUSE)
+                if len(page) < 1000:
+                    break
+
+            candles = [self._candle_to_dict(c) for c in collected]
+            # de-duplicate by timestamp (windows may overlap)
+            seen = set()
+            unique = []
+            for c in candles:
+                if c["time"] in seen:
+                    continue
+                seen.add(c["time"])
+                unique.append(c)
+            unique.sort(key=lambda c: c["time"])
+
+            closed = [c for c in unique if c["time"] < floor_ts(now, tf_sec)]
             if closed:
                 save_candles(ticker, timeframe, closed)
-            logger.info(f"[TINKOFF] Got {len(candles)} candles for {ticker} {timeframe}")
-            return candles[-limit:] if len(candles) > limit else candles
+            logger.info(f"[TINKOFF] Got {len(unique)} candles for {ticker} {timeframe} ({requests_made} calls)")
+            return unique[-target:] if len(unique) > target else unique
         except grpc.RpcError as e:
             code = getattr(e.code(), "name", "UNKNOWN")
             if code == "UNAUTHENTICATED":

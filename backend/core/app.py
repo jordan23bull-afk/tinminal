@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from core.registry import ModuleRegistry
 from core.database import init_db, get_db_connection
 from core.tls import ensure_bundle
+from scan.atr_scanner import scan_atr, get_last_trading_day
 
 ensure_bundle()
 
@@ -239,6 +240,34 @@ def prices():
         return jsonify({"prices": fallback_result})
     except Exception as e:
         logger.error(f"Prices API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scan/atr", methods=["POST"])
+@limiter.limit("5/minute")
+def scan_atr_route():
+    try:
+        body = request.json or {}
+        threshold = body.get("atr_threshold", 0)
+        date = body.get("date") or None
+        result = scan_atr(threshold, date)
+        if "error" in result:
+            return jsonify(result), 400
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"ATR scan error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scan/last-trading-day")
+def last_trading_day_route():
+    try:
+        date = get_last_trading_day()
+        if not date:
+            return jsonify({"error": "Не удалось определить последний торговый день"}), 400
+        return jsonify({"date": date})
+    except Exception as e:
+        logger.error(f"Last trading day error: {e}")
         return jsonify({"error": str(e)}), 500
 
 

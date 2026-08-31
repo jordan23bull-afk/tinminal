@@ -114,4 +114,4 @@ function refreshAllSymbolDropdowns() {
   });
 }
 
-export { loadTickers, saveTickers, addTicker, removeTicker, loadFlags, toggleFlag, getTickerFlag, buildSymbolItemEl, refreshAllSymbolDropdowns };
+export { loadTickers, saveTickers, addTicker, removeTicker, loadFlags, saveFlags, toggleFlag, getTickerFlag, buildSymbolItemEl, refreshAllSymbolDropdowns };
