@@ -37,7 +37,7 @@ limiter = Limiter(
     storage_uri="memory://",
 )
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 active_streams = set()
 _streams_lock = threading.Lock()
@@ -379,4 +379,5 @@ if __name__ == "__main__":
         port=5000,
         debug=os.environ.get("FLASK_DEBUG", "0") == "1",
         allow_unsafe_werkzeug=True,
+        use_reloader=False,
     )

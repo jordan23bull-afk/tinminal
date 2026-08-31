@@ -26,10 +26,11 @@ export const INDICATOR_TYPES = [
       { value: "cross", label: "До пересечения" }
     ]}
   ]},
-  { id: "poc_day", label: "D", params: [
-    { key: "bins", label: "Уровни", default: 50 }
+  { id: "din_poc", label: "Din POC", params: [
+    { key: "period", label: "Окно (баров)", default: 50 },
+    { key: "bins", label: "Уровни", default: 30 }
   ], extra: [
-    { key: "color", label: "Цвет", type: "color", default: "#2962FF" },
+    { key: "color", label: "Цвет", type: "color", default: "#00C2FF" },
     { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
   ]},
 ];
@@ -61,7 +62,7 @@ export function mergeIndicators() {
     { id: "rsi", label: "RSI" },
     { id: "macd", label: "MACD" },
     { id: "sma", label: "SMA" },
-    { id: "poc_day", label: "D" },
+    { id: "din_poc", label: "Din POC" },
   ];
   INDICATORS.length = 0;
   builtins.forEach(b => {
@@ -75,22 +76,42 @@ export function mergeIndicators() {
 }
 
 function calcPocBins(slice, numBins) {
+  return calcDinPoc(slice, numBins);
+}
+
+function calcDinPoc(slice, numBins) {
+  // Volume profile: spreads each candle's volume across the bins it spans (H-L)
   if (slice.length < 2) return null;
-  const minP = Math.min(...slice.map(x => x.low));
-  const maxP = Math.max(...slice.map(x => x.high));
-  if (maxP === minP) return null;
+  let minP = Infinity, maxP = -Infinity;
+  for (const c of slice) {
+    if (c.low < minP) minP = c.low;
+    if (c.high > maxP) maxP = c.high;
+  }
+  if (maxP <= minP) return null;
   const binSize = (maxP - minP) / numBins;
-  const volAtPrice = new Array(numBins).fill(0);
-  for (const candle of slice) {
-    const avgPrice = (candle.high + candle.low + candle.close) / 3;
-    let bin = Math.floor((avgPrice - minP) / binSize);
-    if (bin >= numBins) bin = numBins - 1;
-    if (bin < 0) bin = 0;
-    volAtPrice[bin] += candle.volume;
+  const vol = new Array(numBins).fill(0);
+  for (const c of slice) {
+    const v = c.volume || 0;
+    if (v <= 0) continue;
+    if (c.high <= c.low) {
+      let b = Math.floor((((c.high + c.low + c.close) / 3) - minP) / binSize);
+      if (b < 0) b = 0; else if (b >= numBins) b = numBins - 1;
+      vol[b] += v;
+      continue;
+    }
+    const span = c.high - c.low;
+    const bStart = Math.max(0, Math.floor((c.low - minP) / binSize));
+    const bEnd = Math.min(numBins - 1, Math.floor((c.high - minP) / binSize - 1e-9));
+    for (let b = bStart; b <= bEnd; b++) {
+      const lo = Math.max(b * binSize + minP, c.low);
+      const hi = Math.min((b + 1) * binSize + minP, c.high);
+      if (hi <= lo) continue;
+      vol[b] += v * ((hi - lo) / span);
+    }
   }
   let maxVol = 0, pocBin = 0;
   for (let b = 0; b < numBins; b++) {
-    if (volAtPrice[b] > maxVol) { maxVol = volAtPrice[b]; pocBin = b; }
+    if (vol[b] > maxVol) { maxVol = vol[b]; pocBin = b; }
   }
   return minP + (pocBin + 0.5) * binSize;
 }
@@ -228,22 +249,14 @@ export function calcIndicator(indId, candles) {
     }
     return rawPoc.map((v, i) => ({ time: candles[i].time, value: v }));
   }
-  if (indId === "poc_day" || (custom && custom.type === "poc_day")) {
-    const numBins = params.bins || 50;
-    const dayGroups = {};
-    candles.forEach((c, i) => {
-      const d = new Date(c.time * 1000).toISOString().slice(0, 10);
-      if (!dayGroups[d]) dayGroups[d] = [];
-      dayGroups[d].push(c);
-    });
-    const dayPoc = {};
-    for (const [day, items] of Object.entries(dayGroups)) {
-      const poc = calcPocBins(items, numBins);
-      dayPoc[day] = poc !== null ? poc : items[0].close;
-    }
-    return candles.map((c) => {
-      const d = new Date(c.time * 1000).toISOString().slice(0, 10);
-      return { time: c.time, value: dayPoc[d] };
+  if (indId === "din_poc" || (custom && custom.type === "din_poc")) {
+    const p = Math.max(1, params.period || 50);
+    const numBins = params.bins || 30;
+    return candles.map((c, i) => {
+      const start = Math.max(0, i - p + 1);
+      const slice = candles.slice(start, i + 1);
+      const poc = calcDinPoc(slice, numBins);
+      return { time: c.time, value: poc !== null ? poc : c.close };
     });
   }
   return null;

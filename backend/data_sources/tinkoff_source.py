@@ -118,6 +118,15 @@ class TinkoffSource(IDataSource):
                 logger.info("[TINKOFF] Created cached gRPC channel")
             return self._channel_cache
 
+    def _get_stream_channel(self):
+        """Create a dedicated gRPC channel for the live MarketDataStream.
+
+        Separate from the cached history channel so that closing the stream
+        (idle stop / reconnect) never invalidates the shared history channel.
+        """
+        creds = grpc.ssl_channel_credentials(root_certificates=root_certificates_bytes())
+        return grpc.secure_channel(PROD_TARGET, creds, options=GRPC_OPTIONS)
+
     def close(self):
         """Close the cached gRPC channel on shutdown."""
         with self._lock:
@@ -316,7 +325,7 @@ class TinkoffSource(IDataSource):
             try:
                 with self._lock:
                     self._last_sent = set()  # reconnect => re-subscribe everything
-                channel = self._get_channel()
+                channel = self._get_stream_channel()
                 stub = marketdata_pb2_grpc.MarketDataStreamServiceStub(channel)
                 self._resync_missed()
                 responses = stub.MarketDataStream(self._requests(), metadata=self._metadata())
@@ -339,6 +348,9 @@ class TinkoffSource(IDataSource):
                         channel.close()
                     except Exception:
                         pass
+                    with self._lock:
+                        if self._channel_cache is channel:
+                            self._channel_cache = None
             if self._stream_stop.wait(delay):
                 break
             delay = min(delay * 2, 15)

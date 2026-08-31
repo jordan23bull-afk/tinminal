@@ -19,7 +19,7 @@ function mskFullTime(time) {
   return d.toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-const HEAVY_INDICATOR_TYPES = new Set(["poc", "poc_day"]);
+const HEAVY_INDICATOR_TYPES = new Set(["poc", "din_poc"]);
 
 export class ChartManager {
   constructor(containerId, onChartChange) {
@@ -28,7 +28,7 @@ export class ChartManager {
     this.onChartChange = onChartChange || (() => {});
     this.indicatorColors = {
       rsi: "#2962FF", macd: "#FF6D00", macd_signal: "#9C27B0",
-      macd_hist: "#787B86", sma: "#e91e63", poc: "#FF5722", poc_day: "#2962FF"
+      macd_hist: "#787B86", sma: "#e91e63", poc: "#FF5722"
     };
     this._activeTool = "crosshair";
     this.activeChartId = null;

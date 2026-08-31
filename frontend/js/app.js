@@ -364,6 +364,41 @@ setupColumnResize();
 // Sort by change % on column header click
 let priceChanges = {};
 let sortMode = null;
+let symbolSortMode = null;
+
+const symbolCol = document.querySelector(".wl-columns-header .wl-col-symbol");
+if (symbolCol) {
+  symbolCol.style.cursor = "pointer";
+  symbolCol.addEventListener("click", () => {
+    const list = loadTickers();
+    if (list.length === 0) return;
+
+    if (symbolSortMode === "asc") {
+      symbolSortMode = "desc";
+    } else {
+      symbolSortMode = "asc";
+    }
+
+    const groups = {};
+    list.forEach(t => {
+      const b = t.board || "TQBR";
+      (groups[b] || (groups[b] = [])).push(t);
+    });
+    list.length = 0;
+    for (const board of ["TQBR", "FORTS", "INDEX"]) {
+      const g = groups[board];
+      if (!g) continue;
+      g.sort((a, b) => {
+        const cmp = String(a.ticker).localeCompare(String(b.ticker));
+        return symbolSortMode === "asc" ? cmp : -cmp;
+      });
+      list.push(...g);
+    }
+
+    saveTickers();
+    renderWatchlist();
+  });
+}
 
 const changeCol = document.querySelector(".wl-columns-header .wl-col-change");
 if (changeCol) {
