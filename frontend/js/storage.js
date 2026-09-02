@@ -28,10 +28,10 @@ function _getAll() {
   return data;
 }
 
-function _flush() {
+function _flush(force = false) {
   _timer = null;
   const body = JSON.stringify(_getAll());
-  if (body === _lastSent) return;
+  if (!force && body === _lastSent) return;
   fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -50,8 +50,7 @@ function _save() {
   _timer = setTimeout(_flush, SAVE_DEBOUNCE);
 }
 
-export async function loadFromServer() {
-  _loading = true;
+export async function loadFromServer() {  _loading = true;
   try {
     _purgeLegacyKeys();
     const res = await fetch("/api/settings");
@@ -76,3 +75,7 @@ localStorage.setItem = function (key, value) {
   _origSetItem(key, value);
   _save();
 };
+
+export function flushNow() {
+  _flush(true);
+}

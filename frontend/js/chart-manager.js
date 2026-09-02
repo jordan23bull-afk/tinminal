@@ -69,14 +69,15 @@ export class ChartManager {
     catch {}
   }
 
-  setAutoLevels(symbol, high, low) {
+  setAutoLevels(symbol, dayHigh, dayLow, eveHigh, eveLow) {
     const prev = this.autoLevels[symbol];
-    this.autoLevels[symbol] = { high, low, ts: Date.now() };
+    this.autoLevels[symbol] = { dayHigh, dayLow, eveHigh, eveLow, ts: Date.now() };
     this._saveAutoLevels();
     if (prev) {
       for (const [id, chartObj] of this.charts) {
         if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
-        const oldPrices = [prev.high, prev.low];
+        const oldPrices = [prev.dayHigh, prev.dayLow, prev.eveHigh, prev.eveLow]
+          .filter(p => p != null);
         chartObj._horizontalLines = chartObj._horizontalLines.filter(l => {
           const p = l.options().price;
           if (p == null) return true;
@@ -91,29 +92,39 @@ export class ChartManager {
     this.alerts = this.alerts.filter(a => !(a.symbol === symbol && a.auto));
     this._saveAlerts();
     this.applyAutoLevelsForSymbol(symbol);
-    this._addSymbolAlert(symbol, high);
-    this._addSymbolAlert(symbol, low);
-    log(`Auto levels set for ${symbol}: ${low} / ${high}`);
+    this._addSymbolAlert(symbol, dayHigh, "#e53935");
+    this._addSymbolAlert(symbol, dayLow, "#e53935");
+    if (eveHigh != null) this._addSymbolAlert(symbol, eveHigh, "#FFEB3B");
+    if (eveLow != null) this._addSymbolAlert(symbol, eveLow, "#FFEB3B");
+    log(`Auto levels set for ${symbol}`);
   }
 
   applyAutoLevelsForSymbol(symbol) {
     const lv = this.autoLevels[symbol];
     if (!lv) return;
+    const LEVELS = [
+      { p: lv.dayLow, c: "#e53935" },
+      { p: lv.dayHigh, c: "#e53935" },
+      { p: lv.eveLow, c: "#FFEB3B" },
+      { p: lv.eveHigh, c: "#FFEB3B" },
+    ];
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
-      this.addHorizontalLine(id, lv.low, { color: "#2196F3", lineWidth: 1, lineStyle: 2 });
-      this.addHorizontalLine(id, lv.high, { color: "#2196F3", lineWidth: 1, lineStyle: 2 });
+      for (const l of LEVELS) {
+        if (l.p != null) this.addHorizontalLine(id, l.p, { color: l.c, lineWidth: 1, lineStyle: 2 });
+      }
     }
   }
 
-  _addSymbolAlert(symbol, price) {
+  _addSymbolAlert(symbol, price, color) {
+    if (price == null) return;
     const exists = this.alerts.some(a => a.symbol === symbol && Math.abs(a.price - price) < 0.5);
     if (exists) return;
     let chartId = null;
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol === symbol) { chartId = id; break; }
     }
-    this.alerts.push({ chartId, symbol, price, id: Date.now(), lineColor: "#2196F3", auto: true });
+    this.alerts.push({ chartId, symbol, price, id: Date.now(), lineColor: color, auto: true });
     this._saveAlerts();
     if (chartId) this._updateLineColor(chartId, price, "#FF9800");
   }
@@ -199,9 +210,10 @@ export class ChartManager {
           this._sendNotification(alert, candle);
           notified.add(key);
         }
+        const firedColor = alert.auto ? (alert.lineColor || "#e53935") : "#9e9e9e";
         for (const [id, chartObj] of this.charts) {
           if (chartObj.config.symbol === alert.symbol) {
-            this._updateLineColor(id, alert.price, "#9e9e9e");
+            this._updateLineColor(id, alert.price, firedColor);
           }
         }
       }
@@ -215,7 +227,10 @@ export class ChartManager {
     const body = `Цена: ${candle.close}`;
     if ("Notification" in window && Notification.permission === "granted") {
       const n = new Notification(title, { body, requireInteraction: false });
-      n.onclick = () => { window.focus(); n.close(); };
+      n.onclick = () => {
+        n.close();
+        window.open(this._alertUrl(alert), "_blank");
+      };
     }
     try {
       const audio = new Audio("sounds/alert.wav");
@@ -223,6 +238,19 @@ export class ChartManager {
       audio.play().catch(() => {});
     } catch {}
     log(`Alert: ${title}`);
+  }
+
+  _alertUrl(alert) {
+    let timeframe = "";
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol === alert.symbol) {
+        timeframe = chartObj.config.timeframe || "";
+        break;
+      }
+    }
+    const params = new URLSearchParams({ symbol: alert.symbol });
+    if (timeframe) params.set("timeframe", timeframe);
+    return `${location.origin}${location.pathname}?${params.toString()}`;
   }
 
   _updateChartConfig(id, updates) {
@@ -654,6 +682,17 @@ export class ChartManager {
     chartObj._horizontalLines = [];
   }
 
+  clearAllScannerData() {
+    for (const id of this.getAllChartIds()) {
+      this.removeAllHorizontalLines(id);
+    }
+    this.alerts = [];
+    this._saveAlerts();
+    this.autoLevels = {};
+    this._saveAutoLevels();
+    log("Cleared all levels, alerts and auto levels");
+  }
+
   clearAllForSymbol(symbol) {
     if (!symbol) return;
     for (const [id, chartObj] of this.charts) {
@@ -687,9 +726,11 @@ export class ChartManager {
     this._saveAlerts();
     const lv = this.autoLevels[symbol];
     if (lv) {
-      if (lv.high != null && Math.abs(lv.high - price) < 0.5) delete lv.high;
-      if (lv.low != null && Math.abs(lv.low - price) < 0.5) delete lv.low;
-      if (lv.high == null && lv.low == null) delete this.autoLevels[symbol];
+      if (lv.dayHigh != null && Math.abs(lv.dayHigh - price) < 0.5) delete lv.dayHigh;
+      if (lv.dayLow != null && Math.abs(lv.dayLow - price) < 0.5) delete lv.dayLow;
+      if (lv.eveHigh != null && Math.abs(lv.eveHigh - price) < 0.5) delete lv.eveHigh;
+      if (lv.eveLow != null && Math.abs(lv.eveLow - price) < 0.5) delete lv.eveLow;
+      if (lv.dayHigh == null && lv.dayLow == null && lv.eveHigh == null && lv.eveLow == null) delete this.autoLevels[symbol];
       this._saveAutoLevels();
     }
   }

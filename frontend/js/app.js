@@ -4,7 +4,7 @@ import { LayoutManager } from "./layout-manager.js";
 import { generateId, log } from "./utils.js";
 import { calcIndicator, mergeIndicators, loadCustomIndicators } from "./indicators.js";
 import { loadTickers, saveTickers, addTicker, removeTicker, toggleFlag, getTickerFlag, loadFlags, saveFlags, refreshAllSymbolDropdowns } from "./tickers.js";
-import { loadFromServer } from "./storage.js";
+import { loadFromServer, flushNow } from "./storage.js";
 
 let selectedTimeframe = "1h";
 let isLoading = false;
@@ -474,6 +474,16 @@ document.getElementById("clear-drawings-btn").addEventListener("click", () => {
   if (!chartObj) return;
   const symbol = chartObj.config.symbol;
   chartManager.clearAllForSymbol(symbol);
+});
+
+document.getElementById("clear-all-btn").addEventListener("click", () => {
+  if (!confirm("Удалить все уровни, алерты и флажки на всех тикерах?")) return;
+  chartManager.clearAllScannerData();
+  saveFlags({});
+  try { localStorage.setItem("trading-scan-flags", "{}"); } catch {}
+  saveState();
+  renderWatchlist();
+  flushNow();
 });
 
 // Watchlist toggle
@@ -959,6 +969,15 @@ document.querySelectorAll("[data-btf]").forEach(btn => {
 });
 
 loadFromServer().then(() => loadSources()).then(() => {
+  const url = new URLSearchParams(location.search);
+  const urlSymbol = (url.get("symbol") || "").trim().toUpperCase();
+  const urlTf = (url.get("timeframe") || "5m").toLowerCase();
+  if (urlSymbol) {
+    symbolInput.value = urlSymbol;
+    selectedTimeframe = urlTf;
+    autoLoad();
+    return;
+  }
   const savedState = loadState();
   if (savedState && restoreState(savedState)) {
     log("State restored from server/localStorage");
@@ -1139,7 +1158,7 @@ document.addEventListener("visibilitychange", () => {
           setFlagDirect(r.ticker, color);
           nextScanFlags[r.ticker] = color;
           if (r.high > 0 && r.low > 0) {
-            chartManager.setAutoLevels(r.ticker, r.high, r.low);
+            chartManager.setAutoLevels(r.ticker, r.high, r.low, r.evening_high, r.evening_low);
           }
           if (r.direction === "buy") buyCount++;
           else sellCount++;

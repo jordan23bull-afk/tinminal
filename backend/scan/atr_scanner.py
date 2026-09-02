@@ -26,6 +26,12 @@ _META_URL = (
     "https://iss.moex.com/iss/engines/stock/markets/shares/"
     "boards/{board}/securities.json"
 )
+_CANDLES_URL = (
+    "https://iss.moex.com/iss/engines/stock/markets/shares/"
+    "boards/{board}/securities/{secid}/candles.json"
+)
+
+EVENING_FROM_HOUR = 19  # вечерняя сессия начинается в 19:00 МСК
 
 
 def get_last_trading_day(max_lookback_days=10):
@@ -111,6 +117,50 @@ def _get_minstep_metadata():
         return {}, set()
 
 
+def _fetch_evening_session(date_str, secid):
+    """High/Low вечерней сессии (с 19:00 МСК до закрытия) за дату.
+
+    Берёт часовые свечи MOEX (времена — МСК) и агрегирует max(HIGH)/min(LOW)
+    по барам, начавшимся с EVENING_FROM_HOUR. Возвращает (high, low) или
+    (None, None) если данных/вечерки нет.
+    """
+    try:
+        resp = requests.get(
+            _CANDLES_URL.format(board=_BOARD, secid=secid),
+            params={"interval": 60, "from": date_str, "till": date_str, "iss.meta": "off"},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        candles = resp.json().get("candles", {})
+        cols = candles.get("columns", [])
+        rows = candles.get("data", [])
+        if not cols or not rows:
+            return None, None
+        idx = {c: i for i, c in enumerate(cols)}
+        if not all(c in idx for c in ("begin", "high", "low", "end")):
+            return None, None
+
+        highs, lows = [], []
+        for row in rows:
+            begin = row[idx["begin"]]
+            if not begin:
+                continue
+            hour = int(begin[11:13])
+            if hour < EVENING_FROM_HOUR:
+                continue
+            try:
+                highs.append(float(row[idx["high"]]))
+                lows.append(float(row[idx["low"]]))
+            except (TypeError, ValueError):
+                pass
+
+        if not highs:
+            return None, None
+        return max(highs), min(lows)
+    except requests.RequestException:
+        return None, None
+
+
 def _to_float(v):
     try:
         return float(v)
@@ -127,7 +177,7 @@ def scan_atr(atr_threshold, date=None):
           "date": "...",
           "threshold": ...,
           "results": [ {ticker, name, atr_points, atr_pct, close, high, low,
-                        value, direction} ]
+                        evening_high, evening_low, value, direction} ]
         }
     direction: "buy" (CLOSE > OPEN), "sell" (CLOSE < OPEN), None (равно).
     """
@@ -192,6 +242,7 @@ def scan_atr(atr_threshold, date=None):
             direction = None
 
         atr_pct = (high - low) / close * 100 if close else 0.0
+        evening_high, evening_low = _fetch_evening_session(target_date, secid)
         results.append({
             "ticker": secid,
             "name": col(row, "SHORTNAME") or secid,
@@ -200,6 +251,8 @@ def scan_atr(atr_threshold, date=None):
             "close": round(close, 2),
             "high": round(high, 2),
             "low": round(low, 2),
+            "evening_high": round(evening_high, 2) if evening_high is not None else None,
+            "evening_low": round(evening_low, 2) if evening_low is not None else None,
             "value": value,
             "direction": direction,
         })
