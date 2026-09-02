@@ -34,6 +34,7 @@ export class ChartManager {
     this.activeChartId = null;
     this._magnetOn = false;
     this.alerts = this._loadAlerts();
+    this.autoLevels = this._loadAutoLevels();
     this.ui = new ChartUI(this);
     this.sync = { symbol: true, timeframe: true, crosshair: true, time: false, dateRange: false };
     if ("Notification" in window && Notification.permission === "default") {
@@ -56,6 +57,65 @@ export class ChartManager {
 
   _saveAlerts() {
     localStorage.setItem("trading-alerts", JSON.stringify(this.alerts));
+  }
+
+  _loadAutoLevels() {
+    try { return JSON.parse(localStorage.getItem("trading-auto-levels") || "{}"); }
+    catch { return {}; }
+  }
+
+  _saveAutoLevels() {
+    try { localStorage.setItem("trading-auto-levels", JSON.stringify(this.autoLevels)); }
+    catch {}
+  }
+
+  setAutoLevels(symbol, high, low) {
+    const prev = this.autoLevels[symbol];
+    this.autoLevels[symbol] = { high, low, ts: Date.now() };
+    this._saveAutoLevels();
+    if (prev) {
+      for (const [id, chartObj] of this.charts) {
+        if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
+        const oldPrices = [prev.high, prev.low];
+        chartObj._horizontalLines = chartObj._horizontalLines.filter(l => {
+          const p = l.options().price;
+          if (p == null) return true;
+          if (oldPrices.some(op => Math.abs(p - op) < 0.5)) {
+            chartObj.mainSeries.removePriceLine(l);
+            return false;
+          }
+          return true;
+        });
+      }
+    }
+    this.alerts = this.alerts.filter(a => !(a.symbol === symbol && a.auto));
+    this._saveAlerts();
+    this.applyAutoLevelsForSymbol(symbol);
+    this._addSymbolAlert(symbol, high);
+    this._addSymbolAlert(symbol, low);
+    log(`Auto levels set for ${symbol}: ${low} / ${high}`);
+  }
+
+  applyAutoLevelsForSymbol(symbol) {
+    const lv = this.autoLevels[symbol];
+    if (!lv) return;
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
+      this.addHorizontalLine(id, lv.low, { color: "#2196F3", lineWidth: 1, lineStyle: 2 });
+      this.addHorizontalLine(id, lv.high, { color: "#2196F3", lineWidth: 1, lineStyle: 2 });
+    }
+  }
+
+  _addSymbolAlert(symbol, price) {
+    const exists = this.alerts.some(a => a.symbol === symbol && Math.abs(a.price - price) < 0.5);
+    if (exists) return;
+    let chartId = null;
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol === symbol) { chartId = id; break; }
+    }
+    this.alerts.push({ chartId, symbol, price, id: Date.now(), lineColor: "#2196F3", auto: true });
+    this._saveAlerts();
+    if (chartId) this._updateLineColor(chartId, price, "#FF9800");
   }
 
   addAlert(chartId, price) {
@@ -128,7 +188,7 @@ export class ChartManager {
     }) || null;
   }
 
-  checkAlerts(candle) {
+  checkAlerts(candle, opts = {}) {
     const notified = new Set();
     for (const alert of this.alerts) {
       if (alert.triggered) continue;
@@ -141,7 +201,7 @@ export class ChartManager {
         }
         for (const [id, chartObj] of this.charts) {
           if (chartObj.config.symbol === alert.symbol) {
-            this._updateLineColor(id, alert.price, "#2196F3");
+            this._updateLineColor(id, alert.price, "#9e9e9e");
           }
         }
       }
@@ -594,6 +654,27 @@ export class ChartManager {
     chartObj._horizontalLines = [];
   }
 
+  clearAllForSymbol(symbol) {
+    if (!symbol) return;
+    for (const [id, chartObj] of this.charts) {
+      if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
+      for (const line of chartObj._horizontalLines) chartObj.mainSeries.removePriceLine(line);
+      chartObj._horizontalLines = [];
+    }
+    this.alerts = this.alerts.filter(a => a.symbol !== symbol);
+    this._saveAlerts();
+    delete this.autoLevels[symbol];
+    this._saveAutoLevels();
+    try {
+      const scanFlags = JSON.parse(localStorage.getItem("trading-scan-flags") || "{}");
+      if (scanFlags[symbol]) {
+        delete scanFlags[symbol];
+        localStorage.setItem("trading-scan-flags", JSON.stringify(scanFlags));
+      }
+    } catch {}
+    log(`Cleared all lines/alerts for ${symbol}`);
+  }
+
   _removeLineFromAll(price, symbol) {
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
@@ -604,6 +685,13 @@ export class ChartManager {
     }
     this.alerts = this.alerts.filter(a => !(a.symbol === symbol && Math.abs(a.price - price) < 0.5));
     this._saveAlerts();
+    const lv = this.autoLevels[symbol];
+    if (lv) {
+      if (lv.high != null && Math.abs(lv.high - price) < 0.5) delete lv.high;
+      if (lv.low != null && Math.abs(lv.low - price) < 0.5) delete lv.low;
+      if (lv.high == null && lv.low == null) delete this.autoLevels[symbol];
+      this._saveAutoLevels();
+    }
   }
 
   getAllChartIds() { return Array.from(this.charts.keys()); }

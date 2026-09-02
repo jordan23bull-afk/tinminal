@@ -473,12 +473,7 @@ document.getElementById("clear-drawings-btn").addEventListener("click", () => {
   const chartObj = chartManager.charts.get(activeId);
   if (!chartObj) return;
   const symbol = chartObj.config.symbol;
-  for (const [id, obj] of chartManager.charts) {
-    if (obj.config.symbol !== symbol) continue;
-    chartManager.removeAllHorizontalLines(id);
-  }
-  chartManager.alerts = chartManager.alerts.filter(a => a.symbol !== symbol);
-  chartManager._saveAlerts();
+  chartManager.clearAllForSymbol(symbol);
 });
 
 // Watchlist toggle
@@ -579,8 +574,9 @@ const indicators = {};
 
         chartManager.updateData(chartId, data.candles, indicatorData);
         if (data.candles.length > 0) {
-          chartManager.checkAlerts(data.candles[data.candles.length - 1]);
+          chartManager.checkAlerts(data.candles[data.candles.length - 1], { historical: true });
         }
+        chartManager.applyAutoLevelsForSymbol(symbol);
         chartManager.restoreAlertColors();
       }
     } else {
@@ -589,6 +585,8 @@ const indicators = {};
       const chartObj = chartManager.charts.get(chartId);
       chartObj.config._lastCandles = data.candles;
       chartManager.updateData(chartId, data.candles, indicatorData);
+      chartManager.applyAutoLevelsForSymbol(symbol);
+      chartManager.restoreAlertColors();
     }
 
     statusText.textContent = `${symbol} ${timeframe} | ${data.candles.length} candles`;
@@ -1037,6 +1035,28 @@ document.addEventListener("visibilitychange", () => {
     saveFlags(flags);
   }
 
+  const SCAN_FLAGS_KEY = "trading-scan-flags";
+  function loadScanFlags() {
+    try { return JSON.parse(localStorage.getItem(SCAN_FLAGS_KEY) || "{}"); }
+    catch { return {}; }
+  }
+  function saveScanFlags(flags) {
+    try { localStorage.setItem(SCAN_FLAGS_KEY, JSON.stringify(flags)); }
+    catch {}
+  }
+  function clearStaleScanFlags(nextScanFlags) {
+    const old = loadScanFlags();
+    const flags = loadFlags();
+    for (const ticker of Object.keys(old)) {
+      if (nextScanFlags[ticker]) continue;
+      if (ticker in flags) {
+        delete flags[ticker];
+      }
+    }
+    saveFlags(flags);
+    saveScanFlags(nextScanFlags);
+  }
+
   function getWatchlistTickers() {
     return new Set(loadTickers().map(t => t.ticker));
   }
@@ -1110,21 +1130,27 @@ document.addEventListener("visibilitychange", () => {
         const results = data.results || [];
         const wlTickers = getWatchlistTickers();
         let buyCount = 0, sellCount = 0, skipped = 0;
+        const nextScanFlags = {};
 
         for (const r of results) {
           if (!r.direction) continue;
           if (!wlTickers.has(r.ticker)) { skipped++; continue; }
           const color = r.direction === "buy" ? "green" : "red";
           setFlagDirect(r.ticker, color);
+          nextScanFlags[r.ticker] = color;
+          if (r.high > 0 && r.low > 0) {
+            chartManager.setAutoLevels(r.ticker, r.high, r.low);
+          }
           if (r.direction === "buy") buyCount++;
           else sellCount++;
         }
 
+        clearStaleScanFlags(nextScanFlags);
         renderWatchlist();
 
         const total = buyCount + sellCount;
         resultEl.style.color = "";
-        resultEl.textContent = `Флаги проставлены: ${total} (${buyCount} покупка, ${sellCount} продажа) | ${skipped} не в вочлисте | дата: ${data.date}`;
+        resultEl.textContent = `Флаги проставлены: ${total} (${buyCount} покупка, ${sellCount} продажа) | линии+алерты мин/макс: ${total} | ${skipped} не в вочлисте | дата: ${data.date}`;
       } catch (e) {
         resultEl.textContent = "Ошибка: " + e.message;
         resultEl.style.color = "#ef5350";

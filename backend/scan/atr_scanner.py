@@ -126,7 +126,8 @@ def scan_atr(atr_threshold, date=None):
         {
           "date": "...",
           "threshold": ...,
-          "results": [ {ticker, name, atr_points, atr_pct, close, value, direction} ]
+          "results": [ {ticker, name, atr_points, atr_pct, close, high, low,
+                        value, direction} ]
         }
     direction: "buy" (CLOSE > OPEN), "sell" (CLOSE < OPEN), None (равно).
     """
@@ -197,6 +198,8 @@ def scan_atr(atr_threshold, date=None):
             "atr_points": round(atr_points, 2),
             "atr_pct": round(atr_pct, 2),
             "close": round(close, 2),
+            "high": round(high, 2),
+            "low": round(low, 2),
             "value": value,
             "direction": direction,
         })

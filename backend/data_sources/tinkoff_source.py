@@ -224,7 +224,10 @@ class TinkoffSource(IDataSource):
         # page backwards across the time window with a small pause between
         # calls (well within rate limits, so no ban risk).
         target = min(int(limit), MAX_HISTORY_CANDLES)
+        max_lookback = 365 * 86400
         lookback = max(target * tf_sec, 2 * 86400)
+        if lookback > max_lookback:
+            lookback = max_lookback
         from_time = now - lookback
 
         # cache check (same policy as MOEX source)
@@ -243,36 +246,56 @@ class TinkoffSource(IDataSource):
             stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
 
             collected = []
-            window_to = now
-            requests_made = 0
-            max_calls = int(math.ceil(target / 1000.0)) + 1
-            while len(collected) < target and requests_made < max_calls:
-                req = marketdata_pb2.GetCandlesRequest(
-                    instrument_id=meta["figi"],
-                    interval=interval,
-                    limit=min(target, 1000),
-                )
-                from_ts = Timestamp()
-                from_ts.FromSeconds(from_time)
-                to_ts = Timestamp()
-                to_ts.FromSeconds(window_to)
-                getattr(req, "from").CopyFrom(from_ts)
-                getattr(req, "to").CopyFrom(to_ts)
+            # Tinkoff limits how far back large intervals (2h/4h/1d) can go.
+            # A too-deep request yields INVALID_ARGUMENT (30014), so we shrink
+            # the window and retry until a valid range is found.
+            for attempt in range(6):
+                collected = []
+                window_to = now
+                requests_made = 0
+                max_calls = int(math.ceil(target / 1000.0)) + 1
+                try:
+                    while len(collected) < target and requests_made < max_calls:
+                        req = marketdata_pb2.GetCandlesRequest(
+                            instrument_id=meta["figi"],
+                            interval=interval,
+                            limit=min(target, 1000),
+                        )
+                        from_ts = Timestamp()
+                        from_ts.FromSeconds(from_time)
+                        to_ts = Timestamp()
+                        to_ts.FromSeconds(window_to)
+                        getattr(req, "from").CopyFrom(from_ts)
+                        getattr(req, "to").CopyFrom(to_ts)
 
-                resp = stub.GetCandles(req, metadata=self._metadata())
-                page = list(resp.candles)
-                requests_made += 1
-                if not page:
-                    break
+                        resp = stub.GetCandles(req, metadata=self._metadata())
+                        page = list(resp.candles)
+                        requests_made += 1
+                        if not page:
+                            break
 
-                collected.extend(page)
-                # move the window to just before the earliest candle we just got
-                earliest = min(c.time.seconds for c in page)
-                window_to = earliest - 1
-                if requests_made < max_calls:
-                    time.sleep(HISTORY_PAGE_PAUSE)
-                if len(page) < 1000:
-                    break
+                        collected.extend(page)
+                        # move the window to just before the earliest candle we just got
+                        earliest = min(c.time.seconds for c in page)
+                        window_to = earliest - 1
+                        if requests_made < max_calls:
+                            time.sleep(HISTORY_PAGE_PAUSE)
+                        if len(page) < 1000:
+                            break
+                except grpc.RpcError as e:
+                    code = getattr(e.code(), "name", "UNKNOWN")
+                    if code == "INVALID_ARGUMENT":
+                        logger.info(
+                            f"[TINKOFF] GetCandles INVALID_ARGUMENT for {ticker} {timeframe} "
+                            f"(lookback={lookback // 86400}d), shrinking window"
+                        )
+                        if attempt >= 5:
+                            raise
+                        lookback = lookback // 2
+                        from_time = now - max(lookback, 86400)
+                        continue
+                    raise
+                break
 
             candles = [self._candle_to_dict(c) for c in collected]
             # de-duplicate by timestamp (windows may overlap)
