@@ -201,6 +201,8 @@ if (addTickerBtn) {
     if (!ticker) return;
     if (addTicker(ticker, ticker)) {
       renderWatchlist();
+    } else {
+      alert(`Тикер ${ticker} уже есть в вочлисте`);
     }
   });
 }
