@@ -14,7 +14,6 @@ from datetime import datetime, timedelta
 import requests
 
 MIN_VALUE_RUB = 10_000_000   # минимальный дневной оборот, руб.
-EXCLUDE_ETF = True           # отсекать биржевые фонды (ETF/БПИФ)
 
 _BOARD = "TQBR"
 
@@ -85,7 +84,12 @@ def _fetch_moex_history(date_str):
 
 
 def _get_minstep_metadata():
-    """Возвращает (step_dict, etf_secids)."""
+    """Возвращает (step_dict, equity_secids).
+
+    equity_secids — множество SECID только обычных/привилегированных акций
+    (INSTRID == "EQIN"). Всё остальное (ETF/ПИФы IFTF/IFAY, облигации и
+    депозитарные расписки IFA1) отсеивается ещё до подсчёта ATR.
+    """
     try:
         resp = requests.get(_META_URL.format(board=_BOARD), timeout=15)
         resp.raise_for_status()
@@ -101,7 +105,7 @@ def _get_minstep_metadata():
             return {}, set()
         idx = {c: i for i, c in enumerate(cols)}
         step_dict = {}
-        etf_secids = set()
+        equity_secids = set()
         for row in sec_table["data"]:
             secid = row[idx["SECID"]]
             try:
@@ -110,9 +114,9 @@ def _get_minstep_metadata():
                 step = 1.0
             step_dict[secid] = step if step else 1.0
             instr = row[idx["INSTRID"]] if "INSTRID" in idx else ""
-            if instr == "IFTF":
-                etf_secids.add(secid)
-        return step_dict, etf_secids
+            if instr == "EQIN":
+                equity_secids.add(secid)
+        return step_dict, equity_secids
     except requests.RequestException:
         return {}, set()
 
@@ -203,15 +207,18 @@ def scan_atr(atr_threshold, date=None):
         i = col_idx.get(name)
         return row[i] if i is not None else None
 
-    # Метаданные: MINSTEP и множество ETF
-    step_dict, etf_secids = _get_minstep_metadata()
+    # Метаданные: MINSTEP и множество обычных/привилегированных акций (EQIN)
+    step_dict, equity_secids = _get_minstep_metadata()
+    keep_all = not equity_secids  # при сбое метаданных не отсеиваем ничего
 
     results = []
     for row in rows:
         secid = col(row, "SECID")
         if not secid:
             continue
-        if EXCLUDE_ETF and secid in etf_secids:
+        # Оставляем только акции (EQIN); ETF/ПИФы, облигации и депорасписки
+        # отсекаем ещё до подсчёта ATR
+        if not keep_all and secid not in equity_secids:
             continue
 
         close = _to_float(col(row, "CLOSE"))

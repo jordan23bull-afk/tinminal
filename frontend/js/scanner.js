@@ -47,16 +47,18 @@ export function initScanner({ chartManager, renderWatchlist }) {
     modal.innerHTML = `
       <h3>ATR-сканер MOEX</h3>
       <label>Порог ATR (пункты)</label>
-      <input type="number" id="atr-threshold" min="0" step="0.1" value="5" style="width:100%">
+      <input type="number" id="atr-threshold" min="0" step="0.1" value="100" style="width:100%">
       <label>Дата торгов</label>
       <div style="display:flex;align-items:center;gap:6px">
         <input type="date" id="atr-date" style="flex:1">
         <button type="button" class="tool-btn" id="atr-date-refresh" title="Обновить (последний торговый день)" style="padding:2px 8px;font-size:14px">🔄</button>
       </div>
       <div id="atr-result" style="margin-top:10px;font-size:12px;color:var(--text-secondary);min-height:18px"></div>
+      <div id="atr-outside" style="margin-top:8px;display:none"></div>
       <div class="ind-modal-btns">
         <button class="ind-cancel">Отмена</button>
         <button class="ind-save">Сканировать</button>
+        <button class="ind-confirm" style="display:none">Подтвердить</button>
       </div>
     `;
     overlay.appendChild(modal);
@@ -78,14 +80,47 @@ export function initScanner({ chartManager, renderWatchlist }) {
     fillLastTradingDay();
     refreshBtn.addEventListener("click", fillLastTradingDay);
 
+    const confirmBtn = modal.querySelector(".ind-confirm");
+
+    async function applyResults(results) {
+      const wlTickers = getWatchlistTickers();
+      let buyCount = 0, sellCount = 0, skipped = 0;
+      const nextScanFlags = {};
+
+      for (const r of results) {
+        if (!r.direction) continue;
+        if (!wlTickers.has(r.ticker)) { skipped++; continue; }
+        const color = r.direction === "buy" ? "green" : "red";
+        setFlagDirect(r.ticker, color);
+        nextScanFlags[r.ticker] = color;
+        if (r.high > 0 && r.low > 0) {
+          chartManager.setAutoLevels(r.ticker, r.high, r.low, r.evening_high, r.evening_low);
+        }
+        if (r.direction === "buy") buyCount++;
+        else sellCount++;
+      }
+
+      clearStaleScanFlags(nextScanFlags);
+      renderWatchlist();
+
+      const total = buyCount + sellCount;
+      return `Флаги проставлены: ${total} (${buyCount} покупка, ${sellCount} продажа) | ${skipped} не в вочлисте | дата: ${resultsDate}`;
+    }
+
+    let resultsDate = null;
+
     modal.querySelector(".ind-save").addEventListener("click", async () => {
       const threshold = parseFloat(modal.querySelector("#atr-threshold").value) || 0;
       const dateVal = dateInput.value || null;
       const resultEl = modal.querySelector("#atr-result");
       const scanBtn = modal.querySelector(".ind-save");
+      const outsideEl = modal.querySelector("#atr-outside");
       scanBtn.disabled = true;
       scanBtn.textContent = "Загрузка...";
       resultEl.textContent = "";
+      outsideEl.style.display = "none";
+      outsideEl.innerHTML = "";
+      confirmBtn.style.display = "none";
 
       try {
         const resp = await fetch("/api/scan/atr", {
@@ -102,36 +137,53 @@ export function initScanner({ chartManager, renderWatchlist }) {
           return;
         }
 
+        resultsDate = data.date;
         const results = data.results || [];
         const wlTickers = getWatchlistTickers();
-        let buyCount = 0, sellCount = 0, skipped = 0;
-        const nextScanFlags = {};
+        const wlResults = [];
+        const outside = [];
 
         for (const r of results) {
           if (!r.direction) continue;
-          if (!wlTickers.has(r.ticker)) { skipped++; continue; }
-          const color = r.direction === "buy" ? "green" : "red";
-          setFlagDirect(r.ticker, color);
-          nextScanFlags[r.ticker] = color;
-          if (r.high > 0 && r.low > 0) {
-            chartManager.setAutoLevels(r.ticker, r.high, r.low, r.evening_high, r.evening_low);
-          }
-          if (r.direction === "buy") buyCount++;
-          else sellCount++;
+          if (!wlTickers.has(r.ticker)) outside.push(r);
+          else wlResults.push(r);
         }
 
-        clearStaleScanFlags(nextScanFlags);
-        renderWatchlist();
-
-        const total = buyCount + sellCount;
         resultEl.style.color = "";
-        resultEl.textContent = `Флаги проставлены: ${total} (${buyCount} покупка, ${sellCount} продажа) | линии+алерты мин/макс: ${total} | ${skipped} не в вочлисте | дата: ${data.date}`;
+        resultEl.textContent =
+          `Найдено: ${results.length} | в вочлисте: ${wlResults.length} | не в вочлисте: ${outside.length} | дата: ${data.date}`;
+
+        if (outside.length) {
+          const html = outside.map(r =>
+            `<div>${r.ticker} — ${r.name} (${r.direction === "buy" ? "покупка" : "продажа"}, ATR ${r.atr_points})</div>`
+          ).join("");
+          outsideEl.innerHTML = `<b>Не в вочлисте:</b><div style="max-height:140px;overflow:auto">${html}</div>`;
+          outsideEl.style.display = "block";
+        }
+
+        confirmBtn.style.display = "inline-block";
+        confirmBtn.textContent = `Подтвердить (${wlResults.length})`;
+        confirmBtn.dataset.results = JSON.stringify(wlResults);
       } catch (e) {
         resultEl.textContent = "Ошибка: " + e.message;
         resultEl.style.color = "#ef5350";
       }
       scanBtn.disabled = false;
       scanBtn.textContent = "Сканировать";
+    });
+
+    confirmBtn.addEventListener("click", async () => {
+      try {
+        const wlResults = JSON.parse(confirmBtn.dataset.results || "[]");
+        const resultEl = modal.querySelector("#atr-result");
+        resultEl.textContent = await applyResults(wlResults);
+        resultEl.style.color = "";
+        confirmBtn.style.display = "none";
+      } catch (e) {
+        const resultEl = modal.querySelector("#atr-result");
+        resultEl.textContent = "Ошибка: " + e.message;
+        resultEl.style.color = "#ef5350";
+      }
     });
   });
 }

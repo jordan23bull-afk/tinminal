@@ -103,15 +103,15 @@ export class ChartManager {
     const lv = this.autoLevels[symbol];
     if (!lv) return;
     const LEVELS = [
-      { p: lv.dayLow, c: "#e53935" },
-      { p: lv.dayHigh, c: "#e53935" },
-      { p: lv.eveLow, c: "#FFEB3B" },
-      { p: lv.eveHigh, c: "#FFEB3B" },
+      { p: lv.dayLow, c: "#e53935", w: 2 },
+      { p: lv.dayHigh, c: "#e53935", w: 2 },
+      { p: lv.eveLow, c: "#FFEB3B", w: 1 },
+      { p: lv.eveHigh, c: "#FFEB3B", w: 1 },
     ];
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
       for (const l of LEVELS) {
-        if (l.p != null) this.addHorizontalLine(id, l.p, { color: l.c, lineWidth: 1, lineStyle: 2 });
+        if (l.p != null) this.addHorizontalLine(id, l.p, { color: l.c, lineWidth: l.w, lineStyle: 2 });
       }
     }
   }
@@ -621,7 +621,7 @@ export class ChartManager {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
 
-    const savedLines = chartObj._horizontalLines.map(l => l.options().price);
+    const savedLines = chartObj._horizontalLines.map(l => ({ price: l.options().price, ...(l._opts || {}) }));
     chartObj._horizontalLines = [];
     chartObj.chart.removeSeries(chartObj.mainSeries);
 
@@ -635,7 +635,7 @@ export class ChartManager {
       chartObj.chart.timeScale().scrollToPosition(5, false);
     }
 
-    savedLines.forEach(price => this.addHorizontalLine(id, price));
+    for (const opts of savedLines) this.addHorizontalLine(id, opts.price, opts);
     log(`Chart ${id} type changed to ${newType}`);
   }
 
