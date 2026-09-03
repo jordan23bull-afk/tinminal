@@ -547,6 +547,49 @@ export class ChartUI {
   }
 
   bindChartInteractions(id, body, chartObj) {
+    const tooltip = document.createElement("div");
+    tooltip.className = "candle-tooltip hidden";
+    body.appendChild(tooltip);
+
+    const fmtPrice = (v) => (v == null || isNaN(v)) ? "-" : Number(v).toFixed(2);
+
+    chartObj.chart.subscribeCrosshairMove((param) => {
+      if (!param || !param.time || !param.seriesData) {
+        tooltip.classList.add("hidden");
+        return;
+      }
+      const data = param.seriesData.get(chartObj.mainSeries);
+      if (!data || typeof data !== "object" || !("open" in data)) {
+        tooltip.classList.add("hidden");
+        return;
+      }
+      const timeStr = (typeof param.time === "object")
+        ? `${String(param.time.year)}-${String(param.time.month).padStart(2,"0")}-${String(param.time.day).padStart(2,"0")}`
+        : new Date(param.time * 1000).toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+      const dir = data.close >= data.open;
+      tooltip.innerHTML = `
+        <div class="ct-title">${timeStr} <span class="ct-dir ${dir ? 'up' : 'down'}">${dir ? '▲' : '▼'}</span></div>
+        <div class="ct-row"><span>Откр</span><b>${fmtPrice(data.open)}</b></div>
+        <div class="ct-row"><span>Макс</span><b>${fmtPrice(data.high)}</b></div>
+        <div class="ct-row"><span>Мин</span><b>${fmtPrice(data.low)}</b></div>
+        <div class="ct-row"><span>Закр</span><b>${fmtPrice(data.close)}</b></div>
+        ${data.volume !== undefined ? `<div class="ct-row"><span>Объём</span><b>${data.volume}</b></div>` : ""}
+      `;
+      tooltip.classList.remove("hidden");
+      tooltip.style.left = (this._ttX || 20) + "px";
+      tooltip.style.top = (this._ttY || 20) + "px";
+    });
+
+    const onTooltipMove = (e) => {
+      const rect = body.getBoundingClientRect();
+      this._ttX = e.clientX - rect.left + 16;
+      this._ttY = e.clientY - rect.top + 16;
+      if (tooltip.classList.contains("hidden")) return;
+      tooltip.style.left = this._ttX + "px";
+      tooltip.style.top = this._ttY + "px";
+    };
+    body.addEventListener("mousemove", onTooltipMove);
+
     const onHorizontal = (e) => {
       if (e.button !== 0) return;
       if (this.m._activeTool !== "horizontal") return;
@@ -594,6 +637,7 @@ export class ChartUI {
     chartObj._boundListeners = [
       { target: body, handler: onHorizontal, capture: true },
       { target: body, handler: onEraser, capture: true },
+      { target: body, handler: onTooltipMove, capture: false },
     ];
 
     body.addEventListener("contextmenu", (e) => {
