@@ -52,9 +52,8 @@ backend/
   core/app.py            — HTTP API + Socket.IO, менеджер live-потоков
   core/database.py       — SQLite-кэш свечей (WAL)
   core/tls.py            — CA-бандл для gRPC
-  core/registry.py       — автозагрузка источников/индикаторов
-  data_sources/tinkoff_source.py — основной источник (gRPC streaming)
-  data_sources/moex_source.py    — legacy MOEX ISS (отключён)
+  core/registry.py       — автозагрузка источников
+  data_sources/tinkoff_source.py — единственный источник (gRPC streaming)
 frontend/
   js/                    — ES-модули (app, ws-client, chart-manager, indicators, ...)
   index.html, css/
@@ -64,10 +63,10 @@ frontend/
 
 | Метод | Путь | Описание |
 |---|---|---|
-| POST | `/api/history` | история свечей + индикаторы |
+| POST | `/api/history` | история свечей |
 | GET | `/api/prices?symbols=SBER,GAZP` | актуальные цены и изменение % |
 | GET | `/api/settings` / POST | серверный бэкап localStorage |
-| GET | `/api/health` | статус, источники, индикаторы |
+| GET | `/api/health` | статус, источники |
 | WS | Socket.IO | `subscribe` / `unsubscribe` / `candle_update` / `subscribed` / `ticker_error` |
 
 ## Безопасность

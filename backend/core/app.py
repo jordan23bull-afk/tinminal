@@ -13,7 +13,7 @@ from flask_limiter.util import get_remote_address
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from core.registry import ModuleRegistry
-from core.database import init_db, get_db_connection
+from core.database import init_db
 from core.tls import ensure_bundle
 from scan.atr_scanner import scan_atr, get_last_trading_day
 
@@ -113,7 +113,6 @@ def health():
     return jsonify({
         "status": "ok",
         "sources": ModuleRegistry.list_data_sources(),
-        "indicators": ModuleRegistry.list_indicators()
     })
 
 
@@ -121,16 +120,6 @@ def health():
 @limiter.limit("10/second")
 def list_sources():
     return jsonify({"sources": ModuleRegistry.list_data_sources()})
-
-
-@app.route("/api/indicators")
-@limiter.limit("10/second")
-def list_indicators():
-    result = {}
-    for name in ModuleRegistry.list_indicators():
-        ind = ModuleRegistry.get_indicator(name)
-        result[name] = {"parameters": ind.parameters, "output": ind.output_schema}
-    return jsonify(result)
 
 
 @app.route("/api/settings", methods=["GET", "POST"])
@@ -193,17 +182,11 @@ def history():
                 source = ModuleRegistry.get_data_source(name)
                 candles = source.get_historical_data(req["symbol"], req["timeframe"], req.get("limit", 1000))
 
-                indicators = {}
-                for ind_name, params in req.get("indicators", {}).items():
-                    ind = ModuleRegistry.get_indicator(ind_name)
-                    indicators.update(ind.calculate(candles, params))
-
                 return jsonify({
                     "symbol": req["symbol"],
                     "timeframe": req["timeframe"],
                     "source": name,
                     "candles": candles,
-                    "indicators": indicators
                 })
             except Exception as e:
                 logger.error(f"History API error ({name}): {e}")
@@ -396,7 +379,6 @@ if __name__ == "__main__":
     init_db()
     ModuleRegistry.auto_load(os.path.join(BACKEND_DIR, "data_sources"), "data_sources")
     logger.info(f"Loaded sources: {ModuleRegistry.list_data_sources()}")
-    logger.info(f"Loaded indicators: {ModuleRegistry.list_indicators()}")
     
     # Register cleanup on exit
     atexit.register(ModuleRegistry.shutdown)

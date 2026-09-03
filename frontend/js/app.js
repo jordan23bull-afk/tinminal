@@ -499,20 +499,19 @@ async function loadSources() {
     const res = await fetch("/api/sources");
     const data = await res.json();
     if (data.sources && data.sources.length > 0) {
-      const preferred = ["tinkoff", "moex"];
-      sourceSelect.value = preferred.find(s => data.sources.includes(s)) || data.sources[0];
+      sourceSelect.value = data.sources[0];
     }
   } catch (e) {
     log("Failed to load sources:", e);
   }
 }
 
-function autoLoad(indicatorName = null) {
+function autoLoad() {
   if (isLoading) return;
-  loadHistory(null, indicatorName);
+  loadHistory();
 }
 
-async function loadHistory(forceChartId = null, indicatorName = null, symbol = null, timeframe = null, source = null, chartType = null) {
+async function loadHistory(forceChartId = null, symbol = null, timeframe = null, source = null, chartType = null) {
   source = normalizeSource(source || sourceSelect.value);
   symbol = (symbol || symbolInput.value).trim().toUpperCase();
   chartType = chartType || "candlestick";
@@ -534,11 +533,6 @@ async function loadHistory(forceChartId = null, indicatorName = null, symbol = n
     }
   }
 
-const indicators = {};
-  if (indicatorName) {
-    indicators[indicatorName] = {};
-  }
-
   if (!forceChartId) {
     isLoading = true;
     statusText.textContent = "Loading...";
@@ -556,7 +550,7 @@ const indicators = {};
     const res = await fetch("/api/history", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, symbol, timeframe, limit: 3000, indicators }),
+      body: JSON.stringify({ source, symbol, timeframe, limit: 3000 }),
       signal: controller.signal
     });
 
@@ -918,7 +912,7 @@ function restoreState(state) {
   layoutManager.applyLayout();
 
   const fetches = chartIds.map(({ id, chartCfg }) =>
-    loadHistory(id, null, chartCfg.symbol, chartCfg.timeframe, chartCfg.source, chartCfg.chartType)
+    loadHistory(id, chartCfg.symbol, chartCfg.timeframe, chartCfg.source, chartCfg.chartType)
   );
   Promise.all(fetches).then(() => {
     for (const { id, chartCfg } of chartIds) {

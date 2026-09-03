@@ -326,7 +326,7 @@ export class ChartManager {
       chartObj.config.source = source;
       const btn = chartObj.container.querySelector(".ch-symbol-btn");
       if (btn) btn.textContent = symbol;
-      this.onChartChange(id, null, symbol, chartObj.config.timeframe, source, chartObj.chartType);
+      this.onChartChange(id, symbol, chartObj.config.timeframe, source, chartObj.chartType);
     }
   }
 
@@ -338,7 +338,7 @@ export class ChartManager {
       chartObj.container.querySelectorAll(".ch-tf-btn").forEach(b => {
         b.classList.toggle("active", b.dataset.tf === timeframe);
       });
-      this.onChartChange(id, null, chartObj.config.symbol, timeframe, chartObj.config.source, chartObj.chartType);
+      this.onChartChange(id, chartObj.config.symbol, timeframe, chartObj.config.source, chartObj.chartType);
     }
   }
 
@@ -381,7 +381,7 @@ export class ChartManager {
     const chartObj = {
       chart: null, mainSeries: null, volumeSeries: null, chartType,
       config: { ...config }, indicators: {}, container: wrapper, body,
-      _resizeTimer: null, _horizontalLines: [], crosshairPrice: null
+      _resizeTimer: null, _horizontalLines: []
     };
     this.charts.set(id, chartObj);
 
@@ -438,8 +438,6 @@ export class ChartManager {
     chart.subscribeCrosshairMove((param) => {
       if (param && param.time) {
         chartObj.crosshairTime = param.time;
-        const data = param.seriesData.get(chartObj.mainSeries);
-        if (data) chartObj.crosshairPrice = data.close || data.value || null;
         this.syncCrosshair(id, param.time);
       }
     });

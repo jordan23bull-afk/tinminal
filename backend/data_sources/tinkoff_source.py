@@ -411,9 +411,6 @@ class TinkoffSource(IDataSource):
                         channel.close()
                     except Exception:
                         pass
-                    with self._lock:
-                        if self._channel_cache is channel:
-                            self._channel_cache = None
             if self._stream_stop.wait(delay):
                 break
             delay = min(delay * 2, 15)

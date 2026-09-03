@@ -48,3 +48,4 @@ backend/certs/
 
 # Local project context (kept only locally, not on GitHub)
 CONTEXT.md
+REVIEW.md
