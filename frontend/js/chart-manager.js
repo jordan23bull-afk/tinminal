@@ -19,16 +19,20 @@ function mskFullTime(time) {
   return d.toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
-const HEAVY_INDICATOR_TYPES = new Set(["poc", "din_poc"]);
+const HEAVY_INDICATOR_TYPES = new Set(["poc", "din_poc", "poc30", "poc60", "poc120", "poc240", "poc480", "poc_day"]);
+const POC_PRESET_TYPES = new Set(["poc30", "poc60", "poc120", "poc240", "poc480"]);
 
 export class ChartManager {
   constructor(containerId, onChartChange) {
     this.container = document.getElementById(containerId);
     this.charts = new Map();
     this.onChartChange = onChartChange || (() => {});
+    this.onPocNeeds = null;
+    this._pocState = new Map(); // chartId -> indId -> {snap} // snap = {finals, live}
     this.indicatorColors = {
       rsi: "#2962FF", macd: "#FF6D00", macd_signal: "#9C27B0",
-      macd_hist: "#787B86", sma: "#e91e63", poc: "#FF5722"
+      macd_hist: "#787B86", sma: "#e91e63", poc: "#FF5722", din_poc: "#00C2FF", poc30: "#00C2FF",
+      poc60: "#2ECC71", poc120: "#F1C40F", poc240: "#E67E22", poc480: "#E74C3C", poc_day: "#B48EAD"
     };
     this._activeTool = "crosshair";
     this.activeChartId = null;
@@ -37,6 +41,7 @@ export class ChartManager {
     this.autoLevels = this._loadAutoLevels();
     this.ui = new ChartUI(this);
     this.sync = { symbol: true, timeframe: true, crosshair: true, time: false, dateRange: false };
+    setInterval(() => this._tickPoc(), 1000);
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
@@ -69,8 +74,23 @@ export class ChartManager {
     catch {}
   }
 
+  // матчинг уровней/алертов: полтинка тика инструмента, cap 0.5 (старое поведение
+  // для дорогого тикера), при неизвестном тике — 0.01 (низкоценовые бумаги не сливаются)
+  _priceTol(chartObj) {
+    const tick = chartObj && chartObj.config.tick > 0 ? chartObj.config.tick : 0.01;
+    return Math.min(0.5, tick / 2);
+  }
+
+  _symbolTol(symbol) {
+    for (const [, c] of this.charts) {
+      if (c.config.symbol === symbol) return this._priceTol(c);
+    }
+    return this._priceTol(null);
+  }
+
   setAutoLevels(symbol, dayHigh, dayLow, eveHigh, eveLow) {
     const prev = this.autoLevels[symbol];
+    const tol = this._symbolTol(symbol);
     this.autoLevels[symbol] = { dayHigh, dayLow, eveHigh, eveLow, ts: Date.now() };
     this._saveAutoLevels();
     if (prev) {
@@ -81,7 +101,7 @@ export class ChartManager {
         chartObj._horizontalLines = chartObj._horizontalLines.filter(l => {
           const p = l.options().price;
           if (p == null) return true;
-          if (oldPrices.some(op => Math.abs(p - op) < 0.5)) {
+          if (oldPrices.some(op => Math.abs(p - op) < tol)) {
             chartObj.mainSeries.removePriceLine(l);
             return false;
           }
@@ -118,7 +138,8 @@ export class ChartManager {
 
   _addSymbolAlert(symbol, price, color) {
     if (price == null) return;
-    const exists = this.alerts.some(a => a.symbol === symbol && Math.abs(a.price - price) < 0.5);
+    const tol = this._symbolTol(symbol);
+    const exists = this.alerts.some(a => a.symbol === symbol && Math.abs(a.price - price) < tol);
     if (exists) return;
     let chartId = null;
     for (const [id, chartObj] of this.charts) {
@@ -140,7 +161,8 @@ export class ChartManager {
     }
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol) continue;
-      const exists = this.alerts.some(a => a.chartId === id && Math.abs(a.price - price) < 0.5);
+      const tol = this._priceTol(chartObj);
+      const exists = this.alerts.some(a => a.chartId === id && Math.abs(a.price - price) < tol);
       if (!exists) {
         this.alerts.push({ chartId: id, symbol, price, id: Date.now(), lineColor });
       }
@@ -159,11 +181,12 @@ export class ChartManager {
   removeAlert(chartId, price) {
     const sourceObj = this.charts.get(chartId);
     const symbol = sourceObj ? sourceObj.config.symbol : null;
+    const tol = this._priceTol(sourceObj);
     let origColor = "#2196F3";
-    const matched = this.alerts.find(a => Math.abs(a.price - price) < 0.5 && (symbol ? a.symbol === symbol : a.chartId === chartId));
+    const matched = this.alerts.find(a => Math.abs(a.price - price) < tol && (symbol ? a.symbol === symbol : a.chartId === chartId));
     if (matched && matched.lineColor) origColor = matched.lineColor;
     this.alerts = this.alerts.filter(a => {
-      if (Math.abs(a.price - price) >= 0.5) return true;
+      if (Math.abs(a.price - price) >= tol) return true;
       if (symbol && a.symbol === symbol) return false;
       if (a.chartId === chartId) return false;
       return true;
@@ -193,16 +216,20 @@ export class ChartManager {
   }
 
   _findLineByPrice(chartObj, price) {
+    const tol = this._priceTol(chartObj);
     return chartObj._horizontalLines.find(l => {
       const p = l.options().price;
-      return p != null && Math.abs(p - price) < 0.5;
+      return p != null && Math.abs(p - price) < tol;
     }) || null;
   }
 
   checkAlerts(candle, opts = {}) {
     const notified = new Set();
+    const symbol = opts.symbol ? String(opts.symbol).toUpperCase() : null;
     for (const alert of this.alerts) {
       if (alert.triggered) continue;
+      // без фильтра свеча одного тикера ложно сбивала алерты других символов
+      if (symbol && String(alert.symbol).toUpperCase() !== symbol) continue;
       if (candle.high >= alert.price && candle.low <= alert.price) {
         alert.triggered = true;
         const key = `${alert.symbol}_${alert.price}`;
@@ -293,21 +320,157 @@ export class ChartManager {
       chartObj.chart.removeSeries(chartObj.indicators[indId]);
       delete chartObj.indicators[indId];
       chartObj.config._activeIndicators = chartObj.config._activeIndicators.filter(i => i !== indId);
+      if (this.isPoc(indId)) this._leavePoc(id, indId);
     } else {
       const custom = loadCustomIndicators().find(c => c.id === indId);
       const color = (custom && custom.extra && custom.extra.color) || this.indicatorColors[indId] || "#787B86";
       const lineWidth = (custom && custom.extra && custom.extra.lineWidth) || 2;
       const series = chartObj.chart.addLineSeries({
-        color, lineWidth, priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: true
+        color, lineWidth,
+        ...(this.isPoc(indId) ? {
+          lineType: LightweightCharts.LineType.WithSteps,
+          pointMarkersVisible: false,
+          lastValueVisible: true,
+        } : {}),
+        priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: true
       });
       chartObj.indicators[indId] = series;
       chartObj.config._activeIndicators.push(indId);
 
-      if (chartObj.config._lastCandles) {
-        const data = calcIndicator(indId, chartObj.config._lastCandles);
+      if (this.isPoc(indId)) {
+        this._joinPoc(id, indId);
+      } else if (chartObj.config._lastCandles) {
+        const data = calcIndicator(indId, chartObj.config._lastCandles, this.calcOpts(chartObj, indId));
         if (data) series.setData(data);
       }
     }
+  }
+
+  isPoc(indId) {
+    if (indId === "din_poc" || POC_PRESET_TYPES.has(indId) || indId === "poc_day") return true;
+    const custom = loadCustomIndicators().find(c => c.id === indId);
+    return !!custom && (custom.type === "din_poc" || POC_PRESET_TYPES.has(custom.type) || custom.type === "poc_day");
+  }
+
+  _pocWindow(chartObj, indId) {
+    const custom = loadCustomIndicators().find(c => c.id === indId);
+    const params = (custom && custom.params) || {};
+    const type = custom && custom.type;
+    if (POC_PRESET_TYPES.has(indId) || POC_PRESET_TYPES.has(type)) {
+      const preset = POC_PRESET_TYPES.has(type) ? type : indId;
+      if (params.periodMin > 0) return params.periodMin;
+      return parseInt(preset.slice(3), 10) || 30;
+    }
+    if (indId === "poc_day" || type === "poc_day") return params.periodMin > 0 ? params.periodMin : 1440;
+    return params.period > 0 ? params.period : 9; // din_poc
+  }
+
+  _joinPoc(id, indId) {
+    const chartObj = this.charts.get(id);
+    if (!chartObj) return;
+    const state = this._pocState.get(id) || (this._pocState.set(id, {}), this._pocState.get(id));
+    state[indId] = { snap: null };
+    const target = { chatId: id, indId, symbol: chartObj.config.symbol, windowMin: this._pocWindow(chartObj, indId) };
+    if (typeof this.onPocNeeds === "function") this.onPocNeeds([target]);
+  }
+
+  _leavePoc(id, indId) {
+    const state = this._pocState.get(id);
+    if (state) delete state[indId];
+    const chartObj = this.charts.get(id);
+    if (chartObj && typeof this.onPocNeeds === "function") {
+      this.onPocNeeds([{ chatId: id, indId, symbol: chartObj.config.symbol, windowMin: this._pocWindow(chartObj, indId), leave: true }]);
+    }
+  }
+
+  applyPocSnapshot(data) {
+    this._applyPoc(data, (state) => { state.snap = data.snap; });
+  }
+
+  applyPocUpdate(data) {
+    this._applyPoc(data, (state) => { state.snap = data.snap; });
+  }
+
+  _pocStepPoints(snap, nowSec, tfSeconds = 60) {
+    // step-after series: finals (полки по bucketStart), live: первая точка на
+    // bucketStart, ступеньки на каждом изменении POC, правый конец продлевается до now.
+    // Всё время floor-ится к сетке баров: иначе несовпадающие таймстемпы POC
+    // вставляют лишние слоты на time-scale между свечами ("свечи раздвигаются")
+    const pts = [];
+    for (const f of (snap && snap.finals) || []) {
+      if (f.value != null) pts.push({ time: floorTs(f.start, tfSeconds), value: f.value });
+    }
+    const live = snap && snap.live;
+    if (live && live.value != null) {
+      const hist = (live.history && live.history.length)
+        ? live.history
+        : [{ time: live.firstValueTime ?? live.bucketStart, value: live.value }];
+      pts.push({ time: floorTs(live.bucketStart, tfSeconds), value: hist[0].value });
+      for (const h of hist) {
+        if (h.time > live.bucketStart) pts.push({ time: floorTs(h.time, tfSeconds), value: h.value });
+      }
+      const last = pts[pts.length - 1];
+      const tEnd = floorTs(Math.max(nowSec, live.asOf ?? 0, last.time), tfSeconds);
+      if (tEnd > last.time) {
+        pts.push({ time: tEnd, value: live.value });
+      } else {
+        last.value = live.value;
+      }
+    } else if (pts.length) {
+      pts.push({ time: floorTs(nowSec, tfSeconds), value: pts[pts.length - 1].value });
+    }
+    const out = [];
+    for (const p of pts) {
+      if (out.length && p.time <= out[out.length - 1].time) continue;
+      out.push(p);
+    }
+    return out;
+  }
+
+  _applyPoc(data, mutate) {
+    const symbol = String(data.symbol || "").toUpperCase();
+    const nowSec = Math.floor(Date.now() / 1000);
+    for (const [id, chartObj] of this.charts) {
+      if (!chartObj || chartObj.config.symbol !== symbol) continue;
+      for (const indId of Object.keys(chartObj.indicators)) {
+        if (!this.isPoc(indId)) continue;
+        if (this._pocWindow(chartObj, indId) !== data.windowMin) continue;
+        const state = this._pocState.get(id);
+        const st = state && state[indId];
+        if (!st) continue;
+        mutate(st);
+        const pts = this._pocStepPoints(st.snap, nowSec, TF_SECONDS[chartObj.config.timeframe] || 60);
+        chartObj.indicators[indId].setData(pts);
+      }
+    }
+  }
+
+  _tickPoc() {
+    // продлеваем правый конец POC-линии до текущего момента, пока не придёт обновление
+    for (const [id, state] of this._pocState) {
+      const chartObj = this.charts.get(id);
+      if (!chartObj) continue;
+      const nowSec = Math.floor(Date.now() / 1000);
+      for (const [indId, st] of Object.entries(state)) {
+        if (!st || !st.snap || !st.snap.live) continue;
+        if (chartObj.indicators[indId]) {
+          const pts = this._pocStepPoints(st.snap, nowSec, TF_SECONDS[chartObj.config.timeframe] || 60);
+          chartObj.indicators[indId].setData(pts);
+        }
+      }
+    }
+  }
+
+  calcOpts(chartObj, indId) {
+    if (!this.isPoc(indId)) return {};
+    // тик инструмента — дефолт бина, если пользователь не задал свой; для poc30 ещё тф для окна в минутах
+    const custom = loadCustomIndicators().find(c => c.id === indId);
+    const userBin = custom && custom.params && custom.params.binSize > 0 ? custom.params.binSize : 0;
+    const opts = userBin ? {} : { binSize: chartObj.config.tick || 0.5 };
+    const custom2 = loadCustomIndicators().find(c => c.id === indId);
+    const preset = POC_PRESET_TYPES.has(indId) ? indId : (custom2 && POC_PRESET_TYPES.has(custom2.type) ? custom2.type : null);
+    if (preset) opts.tfSeconds = TF_SECONDS[chartObj.config.timeframe] || 300;
+    return opts;
   }
 
   setActiveChart(id) {
@@ -593,7 +756,7 @@ export class ChartManager {
       return;
     }
 
-    this.checkAlerts(candle);
+    this.checkAlerts(candle, { symbol: chartObj.config.symbol });
 
     if (chartObj.config._lastCandles) {
       const candles = chartObj.config._lastCandles;
@@ -606,10 +769,11 @@ export class ChartManager {
       const isClosed = candle.time < floorTs(now, tfSeconds);
       const heavyTypes = new Set(loadCustomIndicators().map(c => c.type).filter(t => HEAVY_INDICATOR_TYPES.has(t)));
       for (const [indId, series] of Object.entries(chartObj.indicators)) {
+        if (this.isPoc(indId)) continue; // серверные POC обновляются через poc_* события
         if (HEAVY_INDICATOR_TYPES.has(indId) || heavyTypes.has(indId)) {
           if (!isClosed) continue;
         }
-        const data = calcIndicator(indId, candles);
+        const data = calcIndicator(indId, candles, this.calcOpts(chartObj, indId));
         if (data) series.setData(data);
       }
     }
@@ -640,6 +804,7 @@ export class ChartManager {
   removeChart(id) {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
+    const symbol = chartObj.config.symbol;
     this.ui.unbindChartInteractions(chartObj);
     if (chartObj._resizeObserver) chartObj._resizeObserver.disconnect();
     if (chartObj._resizeTimer) clearTimeout(chartObj._resizeTimer);
@@ -659,9 +824,10 @@ export class ChartManager {
     const lineStyle = opts.lineStyle ?? 2;
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
+      const tol = this._priceTol(chartObj);
       const exists = chartObj._horizontalLines.some(l => {
         const p = l.options().price;
-        return p != null && Math.abs(p - price) < 0.5;
+        return p != null && Math.abs(p - price) < tol;
       });
       if (exists) continue;
       const line = chartObj.mainSeries.createPriceLine({
@@ -720,14 +886,15 @@ export class ChartManager {
       chartObj.mainSeries.removePriceLine(line);
       chartObj._horizontalLines = chartObj._horizontalLines.filter(l => l !== line);
     }
-    this.alerts = this.alerts.filter(a => !(a.symbol === symbol && Math.abs(a.price - price) < 0.5));
+    const tol = this._symbolTol(symbol);
+    this.alerts = this.alerts.filter(a => !(a.symbol === symbol && Math.abs(a.price - price) < tol));
     this._saveAlerts();
     const lv = this.autoLevels[symbol];
     if (lv) {
-      if (lv.dayHigh != null && Math.abs(lv.dayHigh - price) < 0.5) delete lv.dayHigh;
-      if (lv.dayLow != null && Math.abs(lv.dayLow - price) < 0.5) delete lv.dayLow;
-      if (lv.eveHigh != null && Math.abs(lv.eveHigh - price) < 0.5) delete lv.eveHigh;
-      if (lv.eveLow != null && Math.abs(lv.eveLow - price) < 0.5) delete lv.eveLow;
+      if (lv.dayHigh != null && Math.abs(lv.dayHigh - price) < tol) delete lv.dayHigh;
+      if (lv.dayLow != null && Math.abs(lv.dayLow - price) < tol) delete lv.dayLow;
+      if (lv.eveHigh != null && Math.abs(lv.eveHigh - price) < tol) delete lv.eveHigh;
+      if (lv.eveLow != null && Math.abs(lv.eveLow - price) < tol) delete lv.eveLow;
       if (lv.dayHigh == null && lv.dayLow == null && lv.eveHigh == null && lv.eveLow == null) delete this.autoLevels[symbol];
       this._saveAutoLevels();
     }

@@ -75,3 +75,27 @@ def get_prev_session_close(symbol):
 def init_db():
     _get_conn()
     logger.info(f"[DB] Initialized at {DB_PATH}")
+
+
+M1_RETENTION_DAYS = 90
+RETENTION_DAYS = 400
+
+
+def prune_candles():
+    """Ретеншн: M1 — 90 дней (POC/ребилд смотрят часы-дни), остальные ТФ — 400
+    дней (историю Tinkoff глубже ~365 дней всё равно не вытащить)."""
+    conn = _get_conn()
+    now = int(time.time())
+    r1 = conn.execute(
+        "DELETE FROM candles WHERE timeframe = '1m' AND time < ?",
+        (now - M1_RETENTION_DAYS * 86400,),
+    )
+    r2 = conn.execute(
+        "DELETE FROM candles WHERE timeframe != '1m' AND time < ?",
+        (now - RETENTION_DAYS * 86400,),
+    )
+    conn.commit()
+    deleted = r1.rowcount + r2.rowcount
+    if deleted:
+        logger.info(f"[DB] Pruned {deleted} old candles ({r1.rowcount} m1, {r2.rowcount} other)")
+    return deleted

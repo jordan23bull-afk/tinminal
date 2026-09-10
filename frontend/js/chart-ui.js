@@ -32,7 +32,9 @@ export class ChartUI {
   }
 
   showContextMenu(e, chartId, price) {
-    const existing = this.m.alerts.find(a => a.chartId === chartId && Math.abs(a.price - price) < 0.5);
+    const chartObj = this.m.charts.get(chartId);
+    const tol = this.m._priceTol(chartObj);
+    const existing = this.m.alerts.find(a => a.chartId === chartId && Math.abs(a.price - price) < tol);
     let html = "";
     html += `<div class="hline-ctx-item" data-action="edit-line">Изменить</div>`;
     if (!existing) {
@@ -475,7 +477,7 @@ export class ChartUI {
           }
         });
       }
-      nameInput.placeholder = type.label + "_" + (type.params[0]?.default || "");
+      nameInput.placeholder = type.label;
     };
     typeSelect.addEventListener("change", renderParams);
     renderParams();
@@ -521,7 +523,7 @@ export class ChartUI {
         overlay.remove();
       } else {
         const typeName = INDICATOR_TYPES.find(t => t.id === type)?.label || type;
-        const name = nameInput.value.trim() || typeName + "_" + (modal.querySelector("#ind-params input")?.value || "20");
+        const name = nameInput.value.trim() || typeName;
         const id = "custom_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
         const params = {};
         paramsDiv.querySelectorAll("input[data-key]").forEach(inp => { params[inp.dataset.key] = Number(inp.value) || 0; });

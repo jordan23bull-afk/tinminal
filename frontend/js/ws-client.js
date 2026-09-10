@@ -14,11 +14,14 @@ export class WSClient {
     this.url = url;
     this.socket = null;
     this.subscriptions = new Map();
+    this.pocSubscriptions = new Map();
     this.handlers = {
       candleUpdate: [],
       statusChange: [],
       subscribed: [],
-      tickerError: []
+      tickerError: [],
+      pocUpdate: [],
+      pocSnapshot: []
     };
     this.connected = false;
     this._pendingUpdates = new Map();
@@ -72,6 +75,14 @@ export class WSClient {
     this.socket.on("ticker_error", (data) => {
       this._emit("tickerError", data);
     });
+
+    this.socket.on("poc_update", (data) => {
+      this._emit("pocUpdate", data);
+    });
+
+    this.socket.on("poc_snapshot", (data) => {
+      this._emit("pocSnapshot", data);
+    });
   }
 
   subscribe(symbol, timeframe, source = "tinkoff") {
@@ -87,6 +98,22 @@ export class WSClient {
     this.subscriptions.delete(room);
     if (this.connected) {
       this.socket.emit("unsubscribe", { symbol, timeframe, source });
+    }
+  }
+
+  subscribePoc(symbol, windowMin = 30) {
+    const key = `poc:${symbol}:${windowMin}`;
+    this.pocSubscriptions.set(key, { symbol, windowMin });
+    if (this.connected) {
+      this.socket.emit("poc_subscribe", { symbol, windowMin });
+    }
+  }
+
+  unsubscribePoc(symbol, windowMin = 30) {
+    const key = `poc:${symbol}:${windowMin}`;
+    this.pocSubscriptions.delete(key);
+    if (this.connected) {
+      this.socket.emit("poc_unsubscribe", { symbol, windowMin });
     }
   }
 
@@ -118,6 +145,9 @@ export class WSClient {
     if (!this.connected) return;
     for (const [room, data] of this.subscriptions) {
       this.socket.emit("subscribe", data);
+    }
+    for (const [, data] of this.pocSubscriptions) {
+      this.socket.emit("poc_subscribe", data);
     }
   }
 }

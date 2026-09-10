@@ -27,10 +27,52 @@ export const INDICATOR_TYPES = [
     ]}
   ]},
   { id: "din_poc", label: "Din POC", params: [
-    { key: "period", label: "Окно (баров)", default: 50 },
-    { key: "bins", label: "Уровни", default: 30 }
+    { key: "period", label: "Период (мин)", default: 30 },
+    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
   ], extra: [
     { key: "color", label: "Цвет", type: "color", default: "#00C2FF" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
+  ]},
+  { id: "poc30", label: "30мин", params: [
+    { key: "periodMin", label: "Окно (мин)", default: 30 },
+    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#00C2FF" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
+  ]},
+  { id: "poc60", label: "1час", params: [
+    { key: "periodMin", label: "Окно (мин)", default: 60 },
+    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#2ECC71" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
+  ]},
+  { id: "poc120", label: "2час", params: [
+    { key: "periodMin", label: "Окно (мин)", default: 120 },
+    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#F1C40F" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
+  ]},
+  { id: "poc240", label: "4час", params: [
+    { key: "periodMin", label: "Окно (мин)", default: 240 },
+    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#E67E22" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
+  ]},
+  { id: "poc480", label: "8час", params: [
+    { key: "periodMin", label: "Окно (мин)", default: 480 },
+    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#E74C3C" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
+  ]},
+  { id: "poc_day", label: "День", params: [
+    { key: "periodMin", label: "Окно (мин)", default: 1440 },
+    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#B48EAD" },
     { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
   ]},
 ];
@@ -63,6 +105,12 @@ export function mergeIndicators() {
     { id: "macd", label: "MACD" },
     { id: "sma", label: "SMA" },
     { id: "din_poc", label: "Din POC" },
+    { id: "poc30", label: "30мин" },
+    { id: "poc60", label: "1час" },
+    { id: "poc120", label: "2час" },
+    { id: "poc240", label: "4час" },
+    { id: "poc480", label: "8час" },
+    { id: "poc_day", label: "День" },
   ];
   INDICATORS.length = 0;
   builtins.forEach(b => {
@@ -70,13 +118,46 @@ export function mergeIndicators() {
   });
   custom.forEach(c => {
     if (!INDICATORS.find(i => i.id === c.id)) {
-      INDICATORS.push({ id: c.id, label: c.label, params: c.params });
+      // пресеты «30мин_30»/«день_1440» из старых дефолтных имён модалки —
+      // показываем канонический label пресета (без «_число»)
+      const presetLabel = INDICATOR_TYPES.find(t => t.id === c.type)?.label;
+      const label = (presetLabel && /^poc\d+$/.test(c.type) || c.type === "poc_day") ? presetLabel : c.label;
+      INDICATORS.push({ id: c.id, label, params: c.params });
     }
   });
 }
 
 function calcPocBins(slice, numBins) {
   return calcDinPoc(slice, numBins);
+}
+
+function calcTickedPoc(slice, binSize) {
+  if (slice.length < 1 || binSize <= 0) return null;
+  let anchor = Infinity;
+  for (const c of slice) anchor = Math.min(anchor, c.low);
+  anchor = Math.floor(anchor / binSize) * binSize;
+  const bins = new Map();
+  for (const c of slice) {
+    const v = c.volume || 0;
+    if (v <= 0) continue;
+    const lo = c.low, hi = c.high;
+    if (hi <= lo) {
+      const b = Math.floor((((lo + hi + c.close) / 3) - anchor) / binSize);
+      bins.set(b, (bins.get(b) || 0) + v);
+      continue;
+    }
+    const span = hi - lo;
+    const bStart = Math.floor((lo - anchor) / binSize);
+    const bEnd = Math.floor((hi - anchor) / binSize - 1e-9);
+    for (let b = bStart; b <= bEnd; b++) {
+      const bLo = Math.max(b * binSize + anchor, lo);
+      const bHi = Math.min((b + 1) * binSize + anchor, hi);
+      if (bHi > bLo) bins.set(b, (bins.get(b) || 0) + v * ((bHi - bLo) / span));
+    }
+  }
+  let maxV = 0, pocB = 0;
+  for (const [b, v] of bins) if (v > maxV) { maxV = v; pocB = b; }
+  return bins.size ? anchor + (pocB + 0.5) * binSize : null;
 }
 
 function calcDinPoc(slice, numBins) {
@@ -116,9 +197,9 @@ function calcDinPoc(slice, numBins) {
   return minP + (pocBin + 0.5) * binSize;
 }
 
-export function calcIndicator(indId, candles) {
+export function calcIndicator(indId, candles, opts = {}) {
   const custom = loadCustomIndicators().find(c => c.id === indId);
-  const params = custom ? custom.params : {};
+  const params = { ...(custom ? custom.params : {}), ...opts };
   const period = params.period || 20;
 
   const emaCalc = (data, p) => {
@@ -250,14 +331,35 @@ export function calcIndicator(indId, candles) {
     return rawPoc.map((v, i) => ({ time: candles[i].time, value: v }));
   }
   if (indId === "din_poc" || (custom && custom.type === "din_poc")) {
-    const p = Math.max(1, params.period || 50);
-    const numBins = params.bins || 30;
-    return candles.map((c, i) => {
-      const start = Math.max(0, i - p + 1);
+    // ProfitChart DynamicPOC: скользящее окно последних Period свечей текущего ТФ,
+    // бин = шаг цены инструмента (тик), POC = центр бина с максимальным объёмом.
+    const prop = params.period > 0 ? params.period : 9;
+    const binSize = params.binSize > 0 ? params.binSize : 0.5;
+    const result = [];
+    for (let i = 0; i < candles.length; i++) {
+      const start = Math.max(0, i - prop + 1);
       const slice = candles.slice(start, i + 1);
-      const poc = calcDinPoc(slice, numBins);
-      return { time: c.time, value: poc !== null ? poc : c.close };
-    });
+      const poc = calcTickedPoc(slice, binSize);
+      result.push({ time: candles[i].time, value: poc !== null ? poc : candles[i].close });
+    }
+    return result;
+  }
+  const presetType = /^poc\d+$/.test(indId) ? indId : (custom && /^poc\d+$/.test(custom.type || "") ? custom.type : null);
+  if (presetType) {
+    // Пресеты «Пок N» (пок30/пок60/...): окно в минутах (число в типе),
+    // конвертируется в свечи текущего ТФ.
+    const windowMin = params.periodMin > 0 ? params.periodMin : (parseInt(presetType.slice(3), 10) || 30);
+    const tfSec = opts.tfSeconds || 300;
+    const prop = Math.max(1, Math.round((windowMin * 60) / tfSec));
+    const binSize = params.binSize > 0 ? params.binSize : 0.5;
+    const result = [];
+    for (let i = 0; i < candles.length; i++) {
+      const start = Math.max(0, i - prop + 1);
+      const slice = candles.slice(start, i + 1);
+      const poc = calcTickedPoc(slice, binSize);
+      result.push({ time: candles[i].time, value: poc !== null ? poc : candles[i].close });
+    }
+    return result;
   }
   return null;
 }

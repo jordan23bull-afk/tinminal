@@ -58,9 +58,25 @@ STREAM_IDLE_TIMEOUT = 30.0
 MAX_HISTORY_CANDLES = 3000
 HISTORY_PAGE_PAUSE = 0.4
 
+# GetLastTrades may cap each call's result size; window a day at a time and
+# warn when a chunk looks truncated (>=1000 trades) rather than silently
+# building wrong candles. ponytail: if a liquid symbol overflows a day chunk,
+# shrink to 1h (TRADES_CHUNK_SEC=3600) — upgrade path when we care.
+TRADES_CHUNK_SEC = 86400
+TRADES_WARN_TARGET = 1000
+
 
 def floor_ts(ts, tf_seconds):
     return ts - (ts % tf_seconds)
+
+
+def _market_open(now_ts):
+    """Приблизительное торговое окно MOEX: ПН–ПТ 07:00–23:50 МСК (UTC+3, без DST).
+    Праздники не учитывает — их закрывает троттлинг повторных фетчей."""
+    t = time.gmtime(now_ts + 3 * 3600)
+    if t.tm_wday >= 5:
+        return False
+    return 7 * 60 <= t.tm_hour * 60 + t.tm_min <= 23 * 60 + 50
 
 
 def _quotation_to_float(q):
@@ -76,10 +92,14 @@ class TinkoffSource(IDataSource):
         self._by_wire = {}          # (figi, interval) -> set of (symbol, timeframe)
         self._last_time = {}        # (figi, interval) -> last candle time (epoch sec)
         self._last_sent = set()     # wires currently sent to server
+        self._trade_cb = {}         # figi -> list of callbacks (multiple POC windows per symbol)
+        self._trades_wanted = {}    # symbol -> figi
+        self._trades_sent = set()   # figis currently trade-subscribed
         self._stream_thread = None
         self._stream_stop = threading.Event()
         self._empty_since = None      # monotonic ts when _wanted became empty
         self._prev_close_cache = {}  # figi -> (close_value | None, ts)
+        self._hist_fetched_at = {}   # (ticker, tf) -> ts последнего фетча из API
         self._channel_cache = None   # cached gRPC channel for history requests
 
     # ------------------------------------------------------------------ #
@@ -213,6 +233,29 @@ class TinkoffSource(IDataSource):
             self._instruments[ticker] = meta
         return meta
 
+    def get_tick(self, symbol):
+        ticker = self._normalize(symbol)
+        meta = self._resolve(ticker)
+        tick = float(meta.get("tick", 0) or 0)
+        if tick:
+            return tick
+        # FindInstrument не отдаёт тик — берём полный инструмент по uid
+        try:
+            chan = self._get_channel()
+            stub = instruments_pb2_grpc.InstrumentsServiceStub(chan)
+            req = instruments_pb2.InstrumentRequest(
+                id_type=instruments_pb2.InstrumentIdType.INSTRUMENT_ID_TYPE_UID,
+                id=meta["instrument_uid"],
+            )
+            resp = stub.GetInstrumentBy(req, metadata=self._metadata())
+            q = resp.instrument.min_price_increment
+            tick = float(getattr(q, "units", 0)) + float(getattr(q, "nano", 0)) / 1e9
+        except Exception as e:
+            logger.warning(f"[TINKOFF] GetInstrumentBy failed for {ticker}: {e}")
+            tick = 0.0
+        meta["tick"] = tick
+        return tick
+
     # ------------------------------------------------------------------ #
     # history (gRPC GetCandles + SQLite cache)
     # ------------------------------------------------------------------ #
@@ -230,14 +273,21 @@ class TinkoffSource(IDataSource):
             lookback = max_lookback
         from_time = now - lookback
 
-        # cache check (same policy as MOEX source)
+        # cache: отдаём из DB, если есть последний закрытый бар; на закрытом рынке
+        # идти не за чем; повторный фетч того же (ticker, tf) — не чаще раза в 120с
+        # (Tinkoff: ≤1000 свечей/вызов, глубина 2h/4h/1d ограничена, минутные квоты)
         db_candles = load_candles(ticker, timeframe, from_time=from_time, limit=target)
         latest_db = get_latest_time(ticker, timeframe)
-        stale = latest_db is None or (now - latest_db) > 300
-        if db_candles and not stale:
-            logger.info(f"[TINKOFF] Serving {len(db_candles)} candles from DB for {ticker} {timeframe}")
-            return db_candles
+        if db_candles and latest_db is not None:
+            gap = now - latest_db
+            last_fetch = self._hist_fetched_at.get((ticker, timeframe), 0)
+            if (gap <= max(300, tf_sec)
+                    or (not _market_open(now) and gap <= 4 * 86400)
+                    or now - last_fetch < 120):
+                logger.info(f"[TINKOFF] Serving {len(db_candles)} candles from DB for {ticker} {timeframe}")
+                return db_candles
 
+        self._hist_fetched_at[(ticker, timeframe)] = now
         meta = self._resolve(ticker)
         interval = TF_MAP.get(timeframe, marketdata_pb2.CANDLE_INTERVAL_HOUR)
 
@@ -320,6 +370,82 @@ class TinkoffSource(IDataSource):
             raise ConnectionError(f"Tinkoff GetCandles failed ({code}): {e.details()}")
 
     # ------------------------------------------------------------------ #
+    # raw trades (GetLastTrades) — shared by candle rebuild and server POC
+    # ------------------------------------------------------------------ #
+    def get_trades_since(self, symbol, from_ts):
+        """Raw GetLastTrades for a symbol since epoch from_ts, sorted by time.
+        Returns list of Trade protobuf messages (time, price, quantity, ...)."""
+        ticker = self._normalize(symbol)
+        meta = self._resolve(ticker)
+        chan = self._get_channel()
+        stub = marketdata_pb2_grpc.MarketDataServiceStub(chan)
+        now = int(time.time())
+        trades = []
+        cursor_to = now
+        while cursor_to > from_ts:
+            chunk_from = max(from_ts, cursor_to - TRADES_CHUNK_SEC)
+            req = marketdata_pb2.GetLastTradesRequest(
+                instrument_id=meta["figi"],
+            )
+            t_from = Timestamp()
+            t_from.FromSeconds(chunk_from)
+            t_to = Timestamp()
+            t_to.FromSeconds(cursor_to)
+            getattr(req, "from").CopyFrom(t_from)
+            getattr(req, "to").CopyFrom(t_to)
+            resp = stub.GetLastTrades(req, metadata=self._metadata())
+            page = list(resp.trades)
+            trades.extend(page)
+            if len(page) >= TRADES_WARN_TARGET:
+                logger.warning(
+                    f"[TINKOFF] GetLastTrades chunk of {len(page)} (possibly truncated) for {ticker}; "
+                    f"result may be incomplete"
+                )
+            cursor_to = chunk_from - 1
+        trades.sort(key=lambda t: t.time.seconds)
+        return trades
+
+    # ------------------------------------------------------------------ #
+    # candle rebuild from raw trades (compare OHLCV vs ProfitChart)
+    # ------------------------------------------------------------------ #
+    def rebuild_candles_from_trades(self, symbol, timeframe, limit=500):
+        """Aggregate raw GetLastTrades into OHLCV candles the way ProfitChart
+        does (open = first trade, close = last, high/low = extremes, volume =
+        sum of quantities), binned by unixtime on the current timeframe."""
+        ticker = self._normalize(symbol)
+        tf_sec = TF_SECONDS.get(timeframe, 3600)
+        now = int(time.time())
+        lookback = max(limit * tf_sec, 2 * 86400)
+        from_time = now - lookback
+
+        trades = self.get_trades_since(ticker, from_time)
+        if not trades:
+            return []
+
+        bins = {}
+        for t in trades:
+            ts = t.time.seconds
+            b = floor_ts(ts, tf_sec)
+            price = _quotation_to_float(t.price)
+            qty = int(t.quantity or 0)
+            cur = bins.get(b)
+            if cur is None:
+                bins[b] = {
+                    "time": b, "open": price, "high": price,
+                    "low": price, "close": price, "volume": qty,
+                }
+                continue
+            if price > cur["high"]:
+                cur["high"] = price
+            if price < cur["low"]:
+                cur["low"] = price
+            cur["close"] = price
+            cur["volume"] += qty
+
+        candles = [bins[k] for k in sorted(bins)]
+        return candles[-limit:] if len(candles) > limit else candles
+
+    # ------------------------------------------------------------------ #
     # live streaming (one shared gRPC MarketDataStream channel)
     # ------------------------------------------------------------------ #
     def subscribe_realtime(self, symbol, timeframe, callback):
@@ -360,12 +486,51 @@ class TinkoffSource(IDataSource):
         logger.info(f"[TINKOFF] Unsubscribed: {key}")
         return True
 
+    def subscribe_trades(self, symbol, callback):
+        """Subscribe to raw trades for a symbol. callback(trade) with Tinkoff Trade message."""
+        name = self._normalize(symbol)
+        meta = self._resolve(name)
+        figi = meta["figi"]
+        with self._lock:
+            callbacks = self._trade_cb.get(figi)
+            if callbacks is None:
+                self._trade_cb[figi] = [callback]
+                self._trades_wanted[name] = figi
+                self._empty_since = None
+            else:
+                callbacks.append(callback)
+        self._ensure_stream()
+        logger.info(f"[TINKOFF] Trades subscription wanted: {name} figi={figi}")
+        return True
+
+    def unsubscribe_trades(self, symbol, callback):
+        name = self._normalize(symbol)
+        with self._lock:
+            figi = self._trades_wanted.get(name)
+            if figi is None:
+                return True
+            callbacks = self._trade_cb.get(figi)
+            if callbacks is not None:
+                callbacks = [cb for cb in callbacks if cb is not callback]
+                if callbacks:
+                    self._trade_cb[figi] = callbacks
+                else:
+                    self._trade_cb.pop(figi, None)
+                    self._trades_wanted.pop(name, None)
+                    if self._trades_wanted:
+                        self._empty_since = None
+                    elif self._empty_since is None:
+                        self._empty_since = time.monotonic()
+        logger.info(f"[TINKOFF] Trades unsubscribed: {name}")
+        return True
+
     def _ensure_stream(self):
         with self._lock:
             if self._stream_thread and self._stream_thread.is_alive():
                 return
             self._stream_stop.clear()
             self._last_sent = set()
+            self._trades_sent = set()
             self._stream_thread = threading.Thread(
                 target=self._stream_loop, daemon=True, name="tinkoff-stream"
             )
@@ -375,7 +540,7 @@ class TinkoffSource(IDataSource):
         delay = 1.0
         while not self._stream_stop.is_set():
             with self._lock:
-                idle = not self._wanted
+                idle = not self._wanted and not self._trades_wanted
                 empty_since = self._empty_since
             if idle:
                 if empty_since is not None and time.monotonic() - empty_since > STREAM_IDLE_TIMEOUT:
@@ -388,6 +553,7 @@ class TinkoffSource(IDataSource):
             try:
                 with self._lock:
                     self._last_sent = set()  # reconnect => re-subscribe everything
+                    self._trades_sent = set()
                 channel = self._get_stream_channel()
                 stub = marketdata_pb2_grpc.MarketDataStreamServiceStub(channel)
                 self._resync_missed()
@@ -486,6 +652,8 @@ class TinkoffSource(IDataSource):
         with self._lock:
             wanted = list(self._wanted.values())
             last = set(self._last_sent)
+            trades_wanted = set(self._trades_wanted.values())
+            trades_last = set(self._trades_sent)
         desired = set(wanted)
         messages = []
         to_sub = desired - last
@@ -510,9 +678,32 @@ class TinkoffSource(IDataSource):
                     ],
                 )
             ))
+        to_sub_trades = trades_wanted - trades_last
+        if to_sub_trades:
+            messages.append(marketdata_pb2.MarketDataRequest(
+                subscribe_trades_request=marketdata_pb2.SubscribeTradesRequest(
+                    subscription_action=marketdata_pb2.SUBSCRIPTION_ACTION_SUBSCRIBE,
+                    instruments=[
+                        marketdata_pb2.TradeInstrument(instrument_id=figi)
+                        for figi in to_sub_trades
+                    ],
+                )
+            ))
+        to_unsub_trades = trades_last - trades_wanted
+        if to_unsub_trades:
+            messages.append(marketdata_pb2.MarketDataRequest(
+                subscribe_trades_request=marketdata_pb2.SubscribeTradesRequest(
+                    subscription_action=marketdata_pb2.SUBSCRIPTION_ACTION_UNSUBSCRIBE,
+                    instruments=[
+                        marketdata_pb2.TradeInstrument(instrument_id=figi)
+                        for figi in to_unsub_trades
+                    ],
+                )
+            ))
         if messages:
             with self._lock:
                 self._last_sent = set(self._wanted.values())
+                self._trades_sent = set(self._trades_wanted.values())
         return messages
 
     def _dispatch(self, resp):
@@ -541,6 +732,15 @@ class TinkoffSource(IDataSource):
                 tf_sec = TF_SECONDS.get(key[1], 60)
                 if candle["time"] < floor_ts(now, tf_sec):
                     save_candles(key[0], key[1], [candle])
+        elif payload == "trade":
+            t = resp.trade
+            with self._lock:
+                cbs = list(self._trade_cb.get(t.figi, ()))
+            for cb in cbs:
+                try:
+                    cb(t)
+                except Exception as e:
+                    logger.error(f"[TINKOFF] trade callback error for {t.figi}: {e}")
         elif payload and payload.endswith("_response"):
             logger.debug(f"[TINKOFF] {payload}")
 

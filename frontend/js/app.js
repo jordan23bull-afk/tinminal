@@ -16,6 +16,29 @@ const chartManager = new ChartManager("charts-grid", loadHistory);
 const wsClient = new WSClient();
 const layoutManager = new LayoutManager(document.getElementById("charts-grid"));
 
+// ------------------------------------------------ server-side POC
+chartManager.onPocNeeds = (needs) => {
+  if (!needs || needs.length === 0) return;
+  for (const n of needs) {
+    const { symbol, windowMin, leave } = n;
+    if (!symbol) continue;
+    if (leave) {
+      wsClient.unsubscribePoc(symbol, windowMin);
+    } else {
+      wsClient.subscribePoc(symbol, windowMin);
+    }
+  }
+};
+
+wsClient.on("pocSnapshot", (data) => {
+  chartManager.applyPocSnapshot(data);
+});
+
+wsClient.on("pocUpdate", (data) => {
+  chartManager.applyPocUpdate(data);
+});
+// ----------------------------------------------------------------
+
 const sourceSelect = document.getElementById("source-select");
 const symbolInput = document.getElementById("symbol-input");
 const statusText = document.getElementById("status-text");
@@ -87,6 +110,28 @@ function syncTickerSubscriptions() {
       wsClient.unsubscribe(sub.symbol, sub.timeframe, sub.source);
       setTickerStatus(sub.symbol, "idle");
     }
+  }
+}
+
+function syncPocSubscriptions() {
+  const wanted = new Map(); // "SYM:win" -> {symbol, windowMin}
+  for (const [, chartObj] of chartManager.charts) {
+    const symbol = chartObj.config.symbol;
+    if (!symbol) continue;
+    for (const indId of Object.keys(chartObj.indicators)) {
+      if (!chartManager.isPoc(indId)) continue;
+      const windowMin = chartManager._pocWindow(chartObj, indId);
+      const key = `${symbol}:${windowMin}`;
+      if (!wanted.has(key)) wanted.set(key, { symbol, windowMin });
+    }
+  }
+  for (const [key, sub] of wsClient.pocSubscriptions) {
+    if (!wanted.has(key)) {
+      wsClient.unsubscribePoc(sub.symbol, sub.windowMin);
+    }
+  }
+  for (const [, sub] of wanted) {
+    wsClient.subscribePoc(sub.symbol, sub.windowMin);
   }
 }
 
@@ -185,6 +230,7 @@ function setupWatchlistItem(item) {
       removeTicker(ticker);
       refreshAllSymbolDropdowns();
       syncTickerSubscriptions();
+      syncPocSubscriptions();
     });
     item.appendChild(del);
   }
@@ -569,19 +615,22 @@ async function loadHistory(forceChartId = null, symbol = null, timeframe = null,
         chartObj.config.source = source;
         chartObj.config.timeframe = timeframe;
         chartObj.config._lastCandles = data.candles;
+        // тик всегда с нового символа: null → дефолтный допуск 0.01, но не чужой тик
+        chartObj.config.tick = data.tick || null;
         const symbolBtn = chartObj.container.querySelector(".ch-symbol-btn");
         if (symbolBtn) symbolBtn.textContent = symbol;
 
         for (const indId of Object.keys(chartObj.indicators)) {
+          if (chartManager.isPoc(indId)) continue; // серверный POC — данные идут через WS
           if (!(indId in indicatorData)) {
-            const calcData = calcIndicator(indId, data.candles);
+            const calcData = calcIndicator(indId, data.candles, chartManager.calcOpts(chartObj, indId));
             if (calcData) indicatorData[indId] = calcData;
           }
         }
 
         chartManager.updateData(chartId, data.candles, indicatorData);
         if (data.candles.length > 0) {
-          chartManager.checkAlerts(data.candles[data.candles.length - 1], { historical: true });
+          chartManager.checkAlerts(data.candles[data.candles.length - 1], { historical: true, symbol });
         }
         chartManager.applyAutoLevelsForSymbol(symbol);
         chartManager.restoreAlertColors();
@@ -591,6 +640,7 @@ async function loadHistory(forceChartId = null, symbol = null, timeframe = null,
       chartManager.createChart(chartId, { symbol, timeframe, source, chartType });
       const chartObj = chartManager.charts.get(chartId);
       chartObj.config._lastCandles = data.candles;
+      if (data.tick) chartObj.config.tick = data.tick;
       chartManager.updateData(chartId, data.candles, indicatorData);
       chartManager.applyAutoLevelsForSymbol(symbol);
       chartManager.restoreAlertColors();
@@ -604,6 +654,9 @@ async function loadHistory(forceChartId = null, symbol = null, timeframe = null,
     wsClient.subscribe(symbol, timeframe, source);
     setTickerStatus(symbol, "live");
     syncTickerSubscriptions();
+
+    // POC-индикаторы активны — пере-подписаться на серверный POC для нового символа
+    syncPocSubscriptions();
   } catch (e) {
     if (e.name === "AbortError") return;
     log("Load history error:", e);
@@ -731,6 +784,7 @@ function selectLayout(count, optionIndex) {
     chartManager.removeChart(ids.pop());
   }
   syncTickerSubscriptions();
+  syncPocSubscriptions();
 
   layoutManager.setLayoutByCount(count, optionIndex);
 
@@ -899,11 +953,19 @@ function restoreState(state) {
         const customInd = loadCustomIndicators().find(c => c.id === indId);
         const color = (customInd && customInd.extra && customInd.extra.color) || chartManager.indicatorColors[indId] || "#787B86";
         const lineWidth = (customInd && customInd.extra && customInd.extra.lineWidth) || 2;
+        const isPocType = ["din_poc", "poc30", "poc60", "poc120", "poc240", "poc480", "poc_day"].includes(indId) ||
+          (customInd && ["din_poc", "poc30", "poc60", "poc120", "poc240", "poc480", "poc_day"].includes(customInd.type));
         const series = chartObj.chart.addLineSeries({
           color, lineWidth,
-          priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: true
+          priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: true,
+          ...(isPocType ? {
+            lineType: LightweightCharts.LineType.WithSteps,
+            pointMarkersVisible: false,
+            lastValueVisible: false,
+          } : {}),
         });
         chartObj.indicators[indId] = series;
+        if (chartManager.isPoc(indId)) chartManager._joinPoc(id, indId);
       });
     }
 
@@ -988,7 +1050,8 @@ log("App initialized");
 
 async function updateWatchlistPrices() {
   const items = document.querySelectorAll(".watchlist-item[data-symbol]");
-  const symbols = Array.from(items).map(el => el.dataset.symbol);
+  const alertSyms = [...new Set(chartManager.alerts.map(a => String(a.symbol).toUpperCase()))];
+  const symbols = [...new Set([...Array.from(items).map(el => el.dataset.symbol), ...alertSyms])];
   if (symbols.length === 0) return;
   try {
     const res = await fetch(`/api/prices?symbols=${symbols.join(",")}`);
@@ -1021,6 +1084,13 @@ async function updateWatchlistPrices() {
         }
       }
     });
+    // глобальная проверка алертов: срабатывают и для символов без открытого графика
+    for (const sym of alertSyms) {
+      const info = data.prices[sym];
+      if (info && info.price != null) {
+        chartManager.checkAlerts({ high: info.price, low: info.price, close: info.price }, { symbol: sym });
+      }
+    }
   } catch (e) {
     log("Failed to update watchlist prices:", e);
   }
@@ -1031,6 +1101,8 @@ let _pricesTimer = setInterval(updateWatchlistPrices, 5000);
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
+    // ponytail: фоновые вкладки троттлят setInterval (~1 мин) — алерты приходят с задержкой, но приходят
+    if (chartManager.alerts.length) return;
     if (_pricesTimer) {
       clearInterval(_pricesTimer);
       _pricesTimer = null;
