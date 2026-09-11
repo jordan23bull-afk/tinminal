@@ -47,5 +47,6 @@ backend/certs/ca-bundle.pem
 *.bak*
 
 # Local project context (kept only locally, not on GitHub)
+AGENTS.md
 CONTEXT.md
 REVIEW.md
