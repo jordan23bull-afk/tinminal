@@ -1,15 +1,7 @@
 import { log } from "./utils.js";
 import { calcIndicator, loadCustomIndicators } from "./indicators.js";
 import { ChartUI } from "./chart-ui.js";
-
-const TF_SECONDS = {
-  "1m": 60, "5m": 300, "10m": 600, "15m": 900, "30m": 1800,
-  "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400,
-};
-
-function floorTs(ts, tfSeconds) {
-  return ts - (ts % tfSeconds);
-}
+import { TF_SECONDS, floorTs, HEAVY_INDICATOR_TYPES, POC_PRESET_TYPES } from "./constants.js";
 
 function mskFullTime(time) {
   if (typeof time === "object" && time.year !== undefined) {
@@ -18,9 +10,6 @@ function mskFullTime(time) {
   const d = new Date(time * 1000);
   return d.toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 }
-
-const HEAVY_INDICATOR_TYPES = new Set(["poc", "din_poc", "poc30", "poc60", "poc120", "poc240", "poc480", "poc_day"]);
-const POC_PRESET_TYPES = new Set(["poc30", "poc60", "poc120", "poc240", "poc480"]);
 
 export class ChartManager {
   constructor(containerId, onChartChange) {
@@ -131,7 +120,7 @@ export class ChartManager {
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
       for (const l of LEVELS) {
-        if (l.p != null) this.addHorizontalLine(id, l.p, { color: l.c, lineWidth: l.w, lineStyle: 2 });
+        if (l.p != null) this.addHorizontalLine(id, l.p, { color: l.c, lineWidth: l.w, lineStyle: 2, ownerSymbol: symbol });
       }
     }
   }
@@ -210,7 +199,7 @@ export class ChartManager {
       const newLine = chartObj.mainSeries.createPriceLine({
         price, color, lineWidth: newLineWidth, lineStyle: newLineStyle, axisLabelVisible: true, title: ""
       });
-      newLine._opts = { color, lineWidth: newLineWidth, lineStyle: newLineStyle };
+      newLine._opts = { color, lineWidth: newLineWidth, lineStyle: newLineStyle, ...(old.ownerSymbol ? { ownerSymbol: old.ownerSymbol } : {}) };
       chartObj._horizontalLines = chartObj._horizontalLines.map(l => l === line ? newLine : l);
     }
   }
@@ -485,6 +474,7 @@ export class ChartManager {
     for (const [id, chartObj] of this.charts) {
       const update = id === sourceId || this.sync.symbol;
       if (!update) continue;
+      if (chartObj.config.symbol !== symbol) this.removeAllHorizontalLines(id);
       chartObj.config.symbol = symbol;
       chartObj.config.source = source;
       const btn = chartObj.container.querySelector(".ch-symbol-btn");
@@ -822,6 +812,7 @@ export class ChartManager {
     const color = opts.color || "#2196F3";
     const lineWidth = opts.lineWidth || 1;
     const lineStyle = opts.lineStyle ?? 2;
+    const ownerSymbol = opts.ownerSymbol || symbol;
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
       const tol = this._priceTol(chartObj);
@@ -833,7 +824,7 @@ export class ChartManager {
       const line = chartObj.mainSeries.createPriceLine({
         price, color, lineWidth, lineStyle, axisLabelVisible: true, title: ""
       });
-      line._opts = { color, lineWidth, lineStyle };
+      line._opts = { color, lineWidth, lineStyle, ownerSymbol };
       chartObj._horizontalLines.push(line);
     }
     log(`Horizontal line added at ${price} for ${symbol}`);

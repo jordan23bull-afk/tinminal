@@ -16,6 +16,7 @@ from core.interfaces import IDataSource
 from core.registry import ModuleRegistry
 from core.database import save_candles, load_candles, get_latest_time, get_prev_session_close
 from core.tls import ensure_bundle, root_certificates_bytes
+from core.times import TF_SECONDS, floor_ts
 
 ensure_bundle()
 
@@ -39,11 +40,6 @@ TF_MAP = {
     "1d": marketdata_pb2.CANDLE_INTERVAL_DAY,
 }
 
-TF_SECONDS = {
-    "1m": 60, "5m": 300, "10m": 600, "15m": 900, "30m": 1800,
-    "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400,
-}
-
 GRPC_OPTIONS = [
     ("grpc.keepalive_time_ms", 10000),
     ("grpc.keepalive_timeout_ms", 5000),
@@ -64,10 +60,6 @@ HISTORY_PAGE_PAUSE = 0.4
 # shrink to 1h (TRADES_CHUNK_SEC=3600) — upgrade path when we care.
 TRADES_CHUNK_SEC = 86400
 TRADES_WARN_TARGET = 1000
-
-
-def floor_ts(ts, tf_seconds):
-    return ts - (ts % tf_seconds)
 
 
 def _market_open(now_ts):

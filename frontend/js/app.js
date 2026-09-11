@@ -611,6 +611,9 @@ async function loadHistory(forceChartId = null, symbol = null, timeframe = null,
         if (chartType && chartObj.chartType !== chartType) {
           chartManager.changeChartType(chartId, chartType);
         }
+        if (chartObj.config.symbol !== symbol) {
+          chartManager.removeAllHorizontalLines(chartId);
+        }
         chartObj.config.symbol = symbol;
         chartObj.config.source = source;
         chartObj.config.timeframe = timeframe;
@@ -774,6 +777,7 @@ function selectLayout(count, optionIndex) {
         color: l.options().color,
         lineWidth: l.options().lineWidth,
         lineStyle: l.options().lineStyle,
+        ownerSymbol: (l._opts && l._opts.ownerSymbol) || symbol,
       })));
     }
   }
@@ -816,7 +820,7 @@ function selectLayout(count, optionIndex) {
           if (typeof line === "number") {
             chartManager.addHorizontalLine(chartId, line);
           } else {
-            chartManager.addHorizontalLine(chartId, line.price, { color: line.color, lineWidth: line.lineWidth, lineStyle: line.lineStyle });
+            chartManager.addHorizontalLine(chartId, line.price, { color: line.color, lineWidth: line.lineWidth, lineStyle: line.lineStyle, ownerSymbol: line.ownerSymbol || symbol });
           }
         });
       });
@@ -875,6 +879,7 @@ function saveState() {
         color: l.options().color,
         lineWidth: l.options().lineWidth,
         lineStyle: l.options().lineStyle,
+        ownerSymbol: l._opts && l._opts.ownerSymbol,
       }))
     });
   }
@@ -953,8 +958,7 @@ function restoreState(state) {
         const customInd = loadCustomIndicators().find(c => c.id === indId);
         const color = (customInd && customInd.extra && customInd.extra.color) || chartManager.indicatorColors[indId] || "#787B86";
         const lineWidth = (customInd && customInd.extra && customInd.extra.lineWidth) || 2;
-        const isPocType = ["din_poc", "poc30", "poc60", "poc120", "poc240", "poc480", "poc_day"].includes(indId) ||
-          (customInd && ["din_poc", "poc30", "poc60", "poc120", "poc240", "poc480", "poc_day"].includes(customInd.type));
+        const isPocType = chartManager.isPoc(indId) || (customInd && chartManager.isPoc(customInd.type));
         const series = chartObj.chart.addLineSeries({
           color, lineWidth,
           priceFormat: { type: "price", precision: 2, minMove: 0.01 }, priceLineVisible: false, lastValueVisible: true,
@@ -976,14 +980,26 @@ function restoreState(state) {
   const fetches = chartIds.map(({ id, chartCfg }) =>
     loadHistory(id, chartCfg.symbol, chartCfg.timeframe, chartCfg.source, chartCfg.chartType)
   );
+  const ownerOfLine = (price) => {
+    for (const [sym, lv] of Object.entries(chartManager.autoLevels)) {
+      const levels = [lv.dayHigh, lv.dayLow, lv.eveHigh, lv.eveLow].filter(p => p != null);
+      if (levels.some(p => Math.abs(p - price) < 0.01)) return sym;
+    }
+    return null;
+  };
   Promise.all(fetches).then(() => {
     for (const { id, chartCfg } of chartIds) {
       if (chartCfg.horizontalLines && chartCfg.horizontalLines.length > 0) {
         chartCfg.horizontalLines.forEach(line => {
+          if (line.ownerSymbol && line.ownerSymbol !== chartCfg.symbol) return;
+          if (!line.ownerSymbol && typeof line !== "number") {
+            const owner = ownerOfLine(line.price);
+            if (owner && owner !== chartCfg.symbol) return;
+          }
           if (typeof line === "number") {
             chartManager.addHorizontalLine(id, line);
           } else {
-            chartManager.addHorizontalLine(id, line.price, { color: line.color, lineWidth: line.lineWidth, lineStyle: line.lineStyle });
+            chartManager.addHorizontalLine(id, line.price, { color: line.color, lineWidth: line.lineWidth, lineStyle: line.lineStyle, ownerSymbol: chartCfg.symbol });
           }
         });
       }

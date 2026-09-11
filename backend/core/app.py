@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from core.registry import ModuleRegistry
 from core.database import init_db, prune_candles
 from core.tls import ensure_bundle
+from core.times import TF_SECONDS, floor_ts
 from scan.atr_scanner import scan_atr, get_last_trading_day
 
 ensure_bundle()
@@ -45,11 +46,6 @@ _streams_lock = threading.Lock()
 SETTINGS_FILE = os.path.join(PROJECT_ROOT, "settings.json")
 
 DEFAULT_SOURCE = "tinkoff"
-
-TF_SECONDS = {
-    "1m": 60, "5m": 300, "10m": 600, "15m": 900, "30m": 1800,
-    "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400,
-}
 
 
 class PocAggregator:
@@ -164,10 +160,6 @@ class PocAggregator:
 
 def _quotation_to_float(q):
     return q.units + q.nano / 1e9
-
-
-def floor_ts(ts, tf_seconds):
-    return ts - (ts % tf_seconds)
 
 
 def get_source_chain(source_name):

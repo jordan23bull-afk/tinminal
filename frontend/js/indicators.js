@@ -1,38 +1,6 @@
 import { log } from "./utils.js";
 
-export const INDICATOR_TYPES = [
-  { id: "sma", label: "SMA", params: [{ key: "period", label: "Период", default: 20 }] },
-  { id: "ema", label: "EMA", params: [{ key: "period", label: "Период", default: 20 }] },
-  { id: "rsi", label: "RSI", params: [{ key: "period", label: "Период", default: 14 }] },
-  { id: "macd", label: "MACD", params: [
-    { key: "fast", label: "Быстрый", default: 12 },
-    { key: "slow", label: "Медленный", default: 26 },
-    { key: "signal", label: "Сигнал", default: 9 }
-  ]},
-
-  { id: "wma", label: "WMA", params: [{ key: "period", label: "Период", default: 20 }] },
-  { id: "stoch", label: "Stochastic", params: [
-    { key: "k", label: "%K", default: 14 },
-    { key: "d", label: "%D", default: 3 }
-  ]},
-  { id: "poc", label: "POC", params: [
-    { key: "period", label: "Период (0=авто)", default: 0 },
-    { key: "bins", label: "Уровни", default: 30 }
-  ], extra: [
-    { key: "color", label: "Цвет", type: "color", default: "#FF5722" },
-    { key: "lineWidth", label: "Толщина", type: "number", default: 2 },
-    { key: "extendMode", label: "Режим", type: "select", options: [
-      { value: "day", label: "Внутри дня" },
-      { value: "cross", label: "До пересечения" }
-    ]}
-  ]},
-  { id: "din_poc", label: "Din POC", params: [
-    { key: "period", label: "Период (мин)", default: 30 },
-    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
-  ], extra: [
-    { key: "color", label: "Цвет", type: "color", default: "#00C2FF" },
-    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
-  ]},
+export const POC_PRESET_TYPES = [
   { id: "poc30", label: "30мин", params: [
     { key: "periodMin", label: "Окно (мин)", default: 30 },
     { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
@@ -77,6 +45,42 @@ export const INDICATOR_TYPES = [
   ]},
 ];
 
+export const INDICATOR_TYPES = [
+  { id: "sma", label: "SMA", params: [{ key: "period", label: "Период", default: 20 }] },
+  { id: "ema", label: "EMA", params: [{ key: "period", label: "Период", default: 20 }] },
+  { id: "rsi", label: "RSI", params: [{ key: "period", label: "Период", default: 14 }] },
+  { id: "macd", label: "MACD", params: [
+    { key: "fast", label: "Быстрый", default: 12 },
+    { key: "slow", label: "Медленный", default: 26 },
+    { key: "signal", label: "Сигнал", default: 9 }
+  ]},
+
+  { id: "wma", label: "WMA", params: [{ key: "period", label: "Период", default: 20 }] },
+  { id: "stoch", label: "Stochastic", params: [
+    { key: "k", label: "%K", default: 14 },
+    { key: "d", label: "%D", default: 3 }
+  ]},
+  { id: "poc", label: "POC", params: [
+    { key: "period", label: "Период (0=авто)", default: 0 },
+    { key: "bins", label: "Уровни", default: 30 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#FF5722" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 },
+    { key: "extendMode", label: "Режим", type: "select", options: [
+      { value: "day", label: "Внутри дня" },
+      { value: "cross", label: "До пересечения" }
+    ]}
+  ]},
+  { id: "din_poc", label: "Din POC", params: [
+    { key: "period", label: "Период (мин)", default: 30 },
+    { key: "binSize", label: "Размер бина (₽)", default: 0.5 }
+  ], extra: [
+    { key: "color", label: "Цвет", type: "color", default: "#00C2FF" },
+    { key: "lineWidth", label: "Толщина", type: "number", default: 2 }
+  ]},
+  ...POC_PRESET_TYPES,
+];
+
 export const INDICATORS = [];
 
 export function loadCustomIndicators() {
@@ -105,12 +109,7 @@ export function mergeIndicators() {
     { id: "macd", label: "MACD" },
     { id: "sma", label: "SMA" },
     { id: "din_poc", label: "Din POC" },
-    { id: "poc30", label: "30мин" },
-    { id: "poc60", label: "1час" },
-    { id: "poc120", label: "2час" },
-    { id: "poc240", label: "4час" },
-    { id: "poc480", label: "8час" },
-    { id: "poc_day", label: "День" },
+    ...POC_PRESET_TYPES.map(({ id, label }) => ({ id, label })),
   ];
   INDICATORS.length = 0;
   builtins.forEach(b => {
@@ -129,35 +128,6 @@ export function mergeIndicators() {
 
 function calcPocBins(slice, numBins) {
   return calcDinPoc(slice, numBins);
-}
-
-function calcTickedPoc(slice, binSize) {
-  if (slice.length < 1 || binSize <= 0) return null;
-  let anchor = Infinity;
-  for (const c of slice) anchor = Math.min(anchor, c.low);
-  anchor = Math.floor(anchor / binSize) * binSize;
-  const bins = new Map();
-  for (const c of slice) {
-    const v = c.volume || 0;
-    if (v <= 0) continue;
-    const lo = c.low, hi = c.high;
-    if (hi <= lo) {
-      const b = Math.floor((((lo + hi + c.close) / 3) - anchor) / binSize);
-      bins.set(b, (bins.get(b) || 0) + v);
-      continue;
-    }
-    const span = hi - lo;
-    const bStart = Math.floor((lo - anchor) / binSize);
-    const bEnd = Math.floor((hi - anchor) / binSize - 1e-9);
-    for (let b = bStart; b <= bEnd; b++) {
-      const bLo = Math.max(b * binSize + anchor, lo);
-      const bHi = Math.min((b + 1) * binSize + anchor, hi);
-      if (bHi > bLo) bins.set(b, (bins.get(b) || 0) + v * ((bHi - bLo) / span));
-    }
-  }
-  let maxV = 0, pocB = 0;
-  for (const [b, v] of bins) if (v > maxV) { maxV = v; pocB = b; }
-  return bins.size ? anchor + (pocB + 0.5) * binSize : null;
 }
 
 function calcDinPoc(slice, numBins) {
@@ -329,37 +299,6 @@ export function calcIndicator(indId, candles, opts = {}) {
       });
     }
     return rawPoc.map((v, i) => ({ time: candles[i].time, value: v }));
-  }
-  if (indId === "din_poc" || (custom && custom.type === "din_poc")) {
-    // ProfitChart DynamicPOC: скользящее окно последних Period свечей текущего ТФ,
-    // бин = шаг цены инструмента (тик), POC = центр бина с максимальным объёмом.
-    const prop = params.period > 0 ? params.period : 9;
-    const binSize = params.binSize > 0 ? params.binSize : 0.5;
-    const result = [];
-    for (let i = 0; i < candles.length; i++) {
-      const start = Math.max(0, i - prop + 1);
-      const slice = candles.slice(start, i + 1);
-      const poc = calcTickedPoc(slice, binSize);
-      result.push({ time: candles[i].time, value: poc !== null ? poc : candles[i].close });
-    }
-    return result;
-  }
-  const presetType = /^poc\d+$/.test(indId) ? indId : (custom && /^poc\d+$/.test(custom.type || "") ? custom.type : null);
-  if (presetType) {
-    // Пресеты «Пок N» (пок30/пок60/...): окно в минутах (число в типе),
-    // конвертируется в свечи текущего ТФ.
-    const windowMin = params.periodMin > 0 ? params.periodMin : (parseInt(presetType.slice(3), 10) || 30);
-    const tfSec = opts.tfSeconds || 300;
-    const prop = Math.max(1, Math.round((windowMin * 60) / tfSec));
-    const binSize = params.binSize > 0 ? params.binSize : 0.5;
-    const result = [];
-    for (let i = 0; i < candles.length; i++) {
-      const start = Math.max(0, i - prop + 1);
-      const slice = candles.slice(start, i + 1);
-      const poc = calcTickedPoc(slice, binSize);
-      result.push({ time: candles[i].time, value: poc !== null ? poc : candles[i].close });
-    }
-    return result;
   }
   return null;
 }
