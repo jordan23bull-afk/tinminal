@@ -50,3 +50,6 @@ backend/certs/ca-bundle.pem
 AGENTS.md
 CONTEXT.md
 REVIEW.md
+
+# Dev self-checks (kept only locally)
+_check_*.py
