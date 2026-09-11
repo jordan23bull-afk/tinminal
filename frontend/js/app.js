@@ -13,6 +13,7 @@ const activeFetchControllers = new Map();
 
 mergeIndicators();
 const chartManager = new ChartManager("charts-grid", loadHistory);
+chartManager.onActiveChartChange = syncWatchlistLiveStatus;
 const wsClient = new WSClient();
 const layoutManager = new LayoutManager(document.getElementById("charts-grid"));
 
@@ -57,11 +58,15 @@ wsClient.on("statusChange", (status) => {
 });
 
 wsClient.on("candleUpdate", (symbol, timeframe, candle) => {
+  let consumed = false;
   for (const [id, chartObj] of chartManager.charts) {
     if (chartObj.config.symbol === symbol && chartObj.config.timeframe === timeframe) {
       chartManager.updateCandle(id, candle);
+      consumed = true;
     }
   }
+  // алерты символов без открытого графика: live-свечи 1m, проверка по полной свече high/low
+  if (!consumed) chartManager.checkAlerts(candle, { symbol });
 });
 
 wsClient.on("tickerError", (info) => {
@@ -94,9 +99,20 @@ function setTickerStatus(symbol, status) {
   if (item) {
     item.classList.toggle("wl-loading", status === "loading");
     item.classList.toggle("wl-error", status === "error");
-    item.classList.toggle("wl-live", status === "live");
+    item.classList.toggle("wl-live", status === "live" && isActiveChartSymbol(symbol));
     item.title = TICKER_STATUS_LABEL[status] || status;
   }
+}
+
+function isActiveChartSymbol(symbol) {
+  const chartObj = chartManager.activeChartId ? chartManager.charts.get(chartManager.activeChartId) : null;
+  return !!chartObj && chartObj.config.symbol === symbol;
+}
+
+function syncWatchlistLiveStatus() {
+  document.querySelectorAll(".watchlist-item.wl-live").forEach(item => {
+    item.classList.toggle("wl-live", isActiveChartSymbol(item.dataset.symbol));
+  });
 }
 
 function syncTickerSubscriptions() {
@@ -105,11 +121,28 @@ function syncTickerSubscriptions() {
     if (!chartObj.config.symbol || !chartObj.config.timeframe) continue;
     rooms.add(`${chartObj.config.symbol}_${chartObj.config.timeframe}`);
   }
+  // символы с алертами, но без открытого графика: держим live-подписку 1m,
+  // чтобы алерты ловили пересечение уровня по полной свече (high/low)
+  for (const a of chartManager.alerts) {
+    const sym = String(a.symbol || "").toUpperCase();
+    if (!sym) continue;
+    const onChart = [...chartManager.charts.values()].some(c => c.config.symbol === sym);
+    if (!onChart) rooms.add(`${sym}_1m`);
+  }
   for (const [room, sub] of wsClient.subscriptions) {
     if (!rooms.has(room)) {
       wsClient.unsubscribe(sub.symbol, sub.timeframe, sub.source);
       setTickerStatus(sub.symbol, "idle");
     }
+  }
+  for (const room of rooms) {
+    if (wsClient.subscriptions.has(room)) continue;
+    if (!wsClient.connected) continue;
+    const i = room.lastIndexOf("_");
+    if (i <= 0) continue;
+    const symbol = room.slice(0, i);
+    const timeframe = room.slice(i + 1);
+    wsClient.subscribe(symbol, timeframe);
   }
 }
 
@@ -1044,7 +1077,7 @@ document.querySelectorAll("[data-btf]").forEach(btn => {
 });
 
 loadFromServer().then(() => loadSources()).then(() => {
-  initScanner({ chartManager, renderWatchlist });
+  initScanner({ chartManager, renderWatchlist, syncTickerSubscriptions });
   const url = new URLSearchParams(location.search);
   const urlSymbol = (url.get("symbol") || "").trim().toUpperCase();
   const urlTf = (url.get("timeframe") || "5m").toLowerCase();

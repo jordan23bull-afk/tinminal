@@ -11,12 +11,83 @@ function mskFullTime(time) {
   return d.toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
 }
 
+// вертикальная линия на время(а) sessionTimes; draw через media coordinate space
+class SessionLinePrimitive {
+  constructor() {
+    this._chart = null;
+    this._series = null;
+    this._times = [];
+  }
+  setTimes(times) { this._times = times || []; }
+  paneViews() {
+    const self = this;
+    return [{
+      zOrder() { return "normal"; },
+      renderer() {
+        return {
+          draw(target) {
+            target.useMediaCoordinateSpace((scope) => {
+              const { context: ctx, mediaSize } = scope;
+              if (!self._chart || self._times.length === 0) return;
+              const ts = self._chart.timeScale();
+              ctx.lineWidth = 1;
+              ctx.strokeStyle = "#758696";
+              ctx.setLineDash([6, 5]);
+              for (const t of self._times) {
+                const x = ts.timeToCoordinate(t);
+                if (x == null) continue;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, mediaSize.height);
+                ctx.stroke();
+              }
+              ctx.setLineDash([]);
+            });
+          },
+          drawBackground() {},
+        };
+      },
+    }];
+  }
+  attached(param) {
+    this._chart = param.chart;
+    this._series = param.series;
+    this.updateData(param.series.data());
+  }
+  updateAllViews() {}
+  updateData(data) {
+    // первая свеча каждого торгового дня (по МСК) = начало сессии
+    const times = [];
+    let lastDay = null;
+    for (const item of data) {
+      const d = new Date(item.time * 1000);
+      const day = d.toLocaleString("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" });
+      if (day !== lastDay) {
+        lastDay = day;
+        times.push(item.time);
+      }
+    }
+    this._times = times;
+  }
+  // live-свеча: если наступил новый торговый день — добавить линию без полного пересчёта
+  addTimeIfNewSession(time) {
+    const d = new Date(time * 1000);
+    const day = d.toLocaleString("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" });
+    const last = this._times.length ? this._times[this._times.length - 1] : null;
+    const lastDay = last != null ? new Date(last * 1000).toLocaleString("en-CA", { timeZone: "Europe/Moscow", year: "numeric", month: "2-digit", day: "2-digit" }) : null;
+    if (day !== lastDay && !this._times.includes(time)) {
+      this._times.push(time);
+    }
+  }
+}
+
 export class ChartManager {
   constructor(containerId, onChartChange) {
     this.container = document.getElementById(containerId);
     this.charts = new Map();
     this.onChartChange = onChartChange || (() => {});
     this.onPocNeeds = null;
+    this.onActiveChartChange = null;
     this._pocState = new Map(); // chartId -> indId -> {snap} // snap = {finals, live}
     this.indicatorColors = {
       rsi: "#2962FF", macd: "#FF6D00", macd_signal: "#9C27B0",
@@ -136,7 +207,8 @@ export class ChartManager {
     }
     this.alerts.push({ chartId, symbol, price, id: Date.now(), lineColor: color, auto: true });
     this._saveAlerts();
-    if (chartId) this._updateLineColor(chartId, price, "#FF9800");
+    // алерт активен — линия сплошная, цвет исходный
+    if (chartId) this._updateLineColor(chartId, price, null, null, 0);
   }
 
   addAlert(chartId, price) {
@@ -163,7 +235,8 @@ export class ChartManager {
       }
     }
     this._saveAlerts();
-    this._updateLineColor(chartId, price, "#FF9800");
+    // алерт активен — линия сплошная, цвет исходный
+    this._updateLineColor(chartId, price, null, null, 0);
     log(`Alert added: ${symbol} @ ${price}`);
   }
 
@@ -181,7 +254,7 @@ export class ChartManager {
       return true;
     });
     this._saveAlerts();
-    this._updateLineColor(chartId, price, origColor);
+    this._updateLineColor(chartId, price, origColor, null, 2);
   }
 
   _updateLineColor(chartId, price, color, lineWidth, lineStyle) {
@@ -193,13 +266,14 @@ export class ChartManager {
       const line = this._findLineByPrice(chartObj, price);
       if (!line) continue;
       const old = line._opts || {};
+      const newColor = color || old.color || "#2196F3";
       const newLineWidth = lineWidth != null ? lineWidth : (old.lineWidth || 1);
       const newLineStyle = lineStyle != null ? lineStyle : (old.lineStyle ?? 2);
       chartObj.mainSeries.removePriceLine(line);
       const newLine = chartObj.mainSeries.createPriceLine({
-        price, color, lineWidth: newLineWidth, lineStyle: newLineStyle, axisLabelVisible: true, title: ""
+        price, color: newColor, lineWidth: newLineWidth, lineStyle: newLineStyle, axisLabelVisible: true, title: ""
       });
-      newLine._opts = { color, lineWidth: newLineWidth, lineStyle: newLineStyle, ...(old.ownerSymbol ? { ownerSymbol: old.ownerSymbol } : {}) };
+      newLine._opts = { color: newColor, lineWidth: newLineWidth, lineStyle: newLineStyle, ...(old.ownerSymbol ? { ownerSymbol: old.ownerSymbol } : {}) };
       chartObj._horizontalLines = chartObj._horizontalLines.map(l => l === line ? newLine : l);
     }
   }
@@ -226,10 +300,10 @@ export class ChartManager {
           this._sendNotification(alert, candle);
           notified.add(key);
         }
-        const firedColor = alert.auto ? (alert.lineColor || "#e53935") : "#9e9e9e";
         for (const [id, chartObj] of this.charts) {
           if (chartObj.config.symbol === alert.symbol) {
-            this._updateLineColor(id, alert.price, firedColor);
+            // сработал — линия пунктир, цвет остаётся исходным
+            this._updateLineColor(id, alert.price, null, null, 2);
           }
         }
       }
@@ -467,6 +541,7 @@ export class ChartManager {
     for (const [cid, obj] of this.charts) {
       obj.container.classList.toggle("active", cid === id);
     }
+    if (this.onActiveChartChange) this.onActiveChartChange(id);
   }
 
   changeSymbol(symbol, source, sourceId) {
@@ -587,6 +662,8 @@ export class ChartManager {
     });
 
     chartObj.mainSeries = this._createSeries(chart, chartType);
+    chartObj.sessionLine = new SessionLinePrimitive();
+    chartObj.mainSeries.attachPrimitive(chartObj.sessionLine);
 
     chart.subscribeCrosshairMove((param) => {
       if (param && param.time) {
@@ -684,6 +761,7 @@ export class ChartManager {
 
     chartObj.mainSeries.setData(this._formatDataForType(candles, chartObj.chartType));
     chartObj.volumeSeries.setData(this._formatVolumeData(candles));
+    if (chartObj.sessionLine) chartObj.sessionLine.updateData(candles);
 
     for (const [indName, values] of Object.entries(indicators)) {
       if (!chartObj.indicators[indName]) {
@@ -748,6 +826,8 @@ export class ChartManager {
 
     this.checkAlerts(candle, { symbol: chartObj.config.symbol });
 
+    if (chartObj.sessionLine) chartObj.sessionLine.addTimeIfNewSession(candle.time);
+
     if (chartObj.config._lastCandles) {
       const candles = chartObj.config._lastCandles;
       const lastIdx = candles.length - 1;
@@ -779,10 +859,13 @@ export class ChartManager {
 
     const newSeries = this._createSeries(chartObj.chart, newType);
     chartObj.mainSeries = newSeries;
+    chartObj.sessionLine = new SessionLinePrimitive();
+    newSeries.attachPrimitive(chartObj.sessionLine);
     chartObj.chartType = newType;
 
     if (chartObj.config._lastCandles) {
       newSeries.setData(this._formatDataForType(chartObj.config._lastCandles, newType));
+      if (chartObj.sessionLine) chartObj.sessionLine.updateData(chartObj.config._lastCandles);
       chartObj.chart.timeScale().fitContent();
       chartObj.chart.timeScale().scrollToPosition(5, false);
     }
@@ -896,7 +979,7 @@ export class ChartManager {
   restoreAlertColors() {
     for (const alert of this.alerts) {
       for (const [id, chartObj] of this.charts) {
-        if (chartObj.config.symbol === alert.symbol) this._updateLineColor(id, alert.price, "#FF9800");
+        if (chartObj.config.symbol === alert.symbol) this._updateLineColor(id, alert.price, null, null, 0);
       }
     }
   }

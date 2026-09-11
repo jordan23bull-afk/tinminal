@@ -1,6 +1,6 @@
 import { loadTickers, loadFlags, saveFlags } from "./tickers.js";
 
-export function initScanner({ chartManager, renderWatchlist }) {
+export function initScanner({ chartManager, renderWatchlist, syncTickerSubscriptions }) {
   const btn = document.getElementById("atr-scan-btn");
   if (!btn) return;
 
@@ -47,7 +47,7 @@ export function initScanner({ chartManager, renderWatchlist }) {
     modal.innerHTML = `
       <h3>ATR-сканер MOEX</h3>
       <label>Порог ATR (пункты)</label>
-      <input type="number" id="atr-threshold" min="0" step="0.1" value="100" style="width:100%">
+      <input type="number" id="atr-threshold" min="0" step="0.1" value="150" style="width:100%">
       <label>Дата торгов</label>
       <div style="display:flex;align-items:center;gap:6px">
         <input type="date" id="atr-date" style="flex:1">
@@ -102,6 +102,7 @@ export function initScanner({ chartManager, renderWatchlist }) {
 
       clearStaleScanFlags(nextScanFlags);
       renderWatchlist();
+      if (syncTickerSubscriptions) syncTickerSubscriptions();
 
       const total = buyCount + sellCount;
       return `Флаги проставлены: ${total} (${buyCount} покупка, ${sellCount} продажа) | ${skipped} не в вочлисте | дата: ${resultsDate}`;
