@@ -179,27 +179,16 @@ export class ChartUI {
       });
     });
 
-    searchInput.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") {
-        const ticker = searchInput.value.trim().toUpperCase();
-        if (ticker) {
-          symbolBtn.textContent = ticker;
-          symbolDropdown.classList.add("hidden");
-          this.m.setActiveChart(id);
-          this.m.changeSymbol(ticker, "tinkoff", id);
-        }
-      }
-    });
-
-    list.querySelectorAll(".ch-symbol-item").forEach(item => {
-      item.addEventListener("click", () => {
-        const ticker = item.dataset.ticker;
-        const source = item.dataset.source;
-        symbolBtn.textContent = ticker;
-        symbolDropdown.classList.add("hidden");
-        this.m.setActiveChart(id);
-        this.m.changeSymbol(ticker, source, id);
-      });
+    // делегированный клик на списке: переживает innerHTML="" в refreshAllSymbolDropdowns
+    list.addEventListener("click", (e) => {
+      const item = e.target.closest(".ch-symbol-item");
+      if (!item) return;
+      const ticker = item.dataset.ticker;
+      const source = item.dataset.source;
+      symbolBtn.textContent = ticker;
+      symbolDropdown.classList.add("hidden");
+      this.m.setActiveChart(id);
+      this.m.changeSymbol(ticker, source, id);
     });
 
     const tfContainer = document.createElement("div");
@@ -262,8 +251,8 @@ export class ChartUI {
     const settings = this.m._getChartSettings(id);
 
     const defaults = {
-      upColor: "#26a69a", downColor: "#ef5350", bgColor: "#131722",
-      gridColor: "#242832", wickUpColor: "#26a69a", wickDownColor: "#ef5350",
+      upColor: "#089982", downColor: "#f23645", bgColor: "#0b0d10",
+      gridColor: "#151a20", wickUpColor: "#089982", wickDownColor: "#f23645",
     };
     const s = { ...defaults, ...settings };
 

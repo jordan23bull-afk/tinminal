@@ -228,6 +228,37 @@ def list_sources():
     return jsonify({"sources": ModuleRegistry.list_data_sources()})
 
 
+@app.route("/api/lookup")
+@limiter.limit("10/second")
+def lookup():
+    """Проверка существования инструмента (FindInstrument с кэшем Tinkoff)."""
+    try:
+        symbol = (request.args.get("symbol") or "").strip().upper()
+        if not symbol:
+            return jsonify({"error": "Missing symbol"}), 400
+        for name in get_source_chain(DEFAULT_SOURCE):
+            source = ModuleRegistry.get_data_source(name)
+            if not hasattr(source, "_resolve"):
+                continue
+            try:
+                meta = source._resolve(symbol)
+                return jsonify({
+                    "ticker": meta.get("ticker") or symbol,
+                    "name": meta.get("name") or symbol,
+                    "instrumentType": meta.get("instrument_type") or "",
+                })
+            except ValueError:
+                logger.info(f"Lookup miss ({name}): {symbol}")
+                return jsonify({"error": f"Instrument {symbol} not found"}), 404
+            except Exception as e:
+                logger.error(f"Lookup error ({name}): {symbol} -> {e}")
+                return jsonify({"error": str(e)}), 503
+        return jsonify({"error": f"Instrument {symbol} not found"}), 404
+    except Exception as e:
+        logger.error(f"Lookup API error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/settings", methods=["GET", "POST"])
 def settings():
     if request.method == "GET":

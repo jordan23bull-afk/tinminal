@@ -26,19 +26,19 @@ class SessionLinePrimitive {
       renderer() {
         return {
           draw(target) {
-            target.useMediaCoordinateSpace((scope) => {
-              const { context: ctx, mediaSize } = scope;
+            target.useBitmapCoordinateSpace(({ context: ctx, bitmapSize, horizontalPixelRatio }) => {
               if (!self._chart || self._times.length === 0) return;
               const ts = self._chart.timeScale();
-              ctx.lineWidth = 1;
+              ctx.lineWidth = 0.5;
               ctx.strokeStyle = "#758696";
               ctx.setLineDash([6, 5]);
               for (const t of self._times) {
                 const x = ts.timeToCoordinate(t);
                 if (x == null) continue;
+                const px = x * horizontalPixelRatio;
                 ctx.beginPath();
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, mediaSize.height);
+                ctx.moveTo(px, 0);
+                ctx.lineTo(px, bitmapSize.height);
                 ctx.stroke();
               }
               ctx.setLineDash([]);
@@ -677,7 +677,7 @@ export class ChartManager {
     });
 
     chartObj.volumeSeries = chart.addHistogramSeries({
-      color: "#26a69a", priceFormat: { type: "volume" },
+      color: "#089982", priceFormat: { type: "volume" },
       priceScaleId: "volume"
     });
     chart.priceScale("volume").applyOptions({
@@ -730,9 +730,9 @@ export class ChartManager {
       case "area":
         return chart.addAreaSeries({ topColor: "rgba(41, 98, 255, 0.4)", bottomColor: "rgba(41, 98, 255, 0.0)", lineColor: "#2962FF", lineWidth: 2, priceLineVisible: true, lastValueVisible: true });
       case "bar":
-        return chart.addBarSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, priceLineVisible: true, lastValueVisible: true });
+        return chart.addBarSeries({ upColor: "#089982", downColor: "#f23645", borderVisible: false, priceLineVisible: true, lastValueVisible: true });
       default:
-        return chart.addCandlestickSeries({ upColor: "#26a69a", downColor: "#ef5350", borderVisible: false, wickUpColor: "#26a69a", wickDownColor: "#ef5350", priceLineVisible: true, lastValueVisible: true });
+        return chart.addCandlestickSeries({ upColor: "#089982", downColor: "#f23645", borderVisible: false, wickUpColor: "#089982", wickDownColor: "#f23645", priceLineVisible: true, lastValueVisible: true });
     }
   }
 

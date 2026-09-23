@@ -5,3 +5,7 @@ export function generateId() {
 export function log(msg, ...args) {
   console.log(`[TradingDashboard] ${msg}`, ...args);
 }
+
+export function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}

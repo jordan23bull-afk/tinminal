@@ -50,6 +50,42 @@ function _save() {
   _timer = setTimeout(_flush, SAVE_DEBOUNCE);
 }
 
+// одноразовая миграция старых дефолтных цветов графиков на палитру rosn
+const CHART_COLOR_MIGRATION = {
+  "#26a69a": "#089982",
+  "#ef5350": "#f23645",
+  "#131722": "#0b0d10",
+  "#242832": "#151a20",
+};
+
+function _migrateChartSettings() {
+  let changed = false;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith("chart-settings-")) continue;
+    const raw = localStorage.getItem(key);
+    if (!raw) continue;
+    try {
+      const obj = JSON.parse(raw);
+      let dirty = false;
+      for (const [from, to] of Object.entries(CHART_COLOR_MIGRATION)) {
+        for (const v of Object.values(obj)) {
+          if (v === from) { dirty = true; break; }
+        }
+        if (!dirty) continue;
+        for (const k of Object.keys(obj)) {
+          if (obj[k] === from) obj[k] = to;
+        }
+      }
+      if (dirty) {
+        _origSetItem(key, JSON.stringify(obj));
+        changed = true;
+      }
+    } catch { /* не валидный JSON — не трогаем */ }
+  }
+  return changed;
+}
+
 export async function loadFromServer() {  _loading = true;
   try {
     _purgeLegacyKeys();
@@ -66,7 +102,9 @@ export async function loadFromServer() {  _loading = true;
   } catch (e) {
     console.warn("Could not load settings from server:", e);
   } finally {
+    const migrated = _migrateChartSettings();
     _loading = false;
+    if (migrated) _save();
   }
 }
 

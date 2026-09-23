@@ -1,4 +1,5 @@
 import { loadTickers, loadFlags, saveFlags } from "./tickers.js";
+import { cssVar } from "./utils.js";
 
 export function initScanner({ chartManager, renderWatchlist, syncTickerSubscriptions }) {
   const btn = document.getElementById("atr-scan-btn");
@@ -94,7 +95,8 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
         setFlagDirect(r.ticker, color);
         nextScanFlags[r.ticker] = color;
         if (r.high > 0 && r.low > 0) {
-          chartManager.setAutoLevels(r.ticker, r.high, r.low, r.evening_high, r.evening_low);
+          const step = r.step || 0;
+          chartManager.setAutoLevels(r.ticker, r.high + step, r.low - step, r.evening_high, r.evening_low);
         }
         if (r.direction === "buy") buyCount++;
         else sellCount++;
@@ -132,7 +134,7 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
         const data = await resp.json();
         if (data.error) {
           resultEl.textContent = data.error;
-          resultEl.style.color = "#ef5350";
+          resultEl.style.color = cssVar("--accent-red");
           scanBtn.disabled = false;
           scanBtn.textContent = "Сканировать";
           return;
@@ -167,7 +169,7 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
         confirmBtn.dataset.results = JSON.stringify(wlResults);
       } catch (e) {
         resultEl.textContent = "Ошибка: " + e.message;
-        resultEl.style.color = "#ef5350";
+        resultEl.style.color = cssVar("--accent-red");
       }
       scanBtn.disabled = false;
       scanBtn.textContent = "Сканировать";
@@ -183,7 +185,7 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
       } catch (e) {
         const resultEl = modal.querySelector("#atr-result");
         resultEl.textContent = "Ошибка: " + e.message;
-        resultEl.style.color = "#ef5350";
+        resultEl.style.color = cssVar("--accent-red");
       }
     });
   });

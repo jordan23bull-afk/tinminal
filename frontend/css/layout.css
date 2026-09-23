@@ -361,6 +361,7 @@
 }
 
 .candle-tooltip .ct-title {
+  font-size: 13px;
   font-weight: 600;
   margin-bottom: 4px;
   color: var(--text-primary);

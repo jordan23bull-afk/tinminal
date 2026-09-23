@@ -9,6 +9,7 @@ ATR-скринер MOEX.
 """
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 import requests
@@ -31,6 +32,9 @@ _CANDLES_URL = (
 )
 
 EVENING_FROM_HOUR = 19  # вечерняя сессия начинается в 19:00 МСК
+
+_evening_cache = {}  # (date, secid) -> (high, low) | (None, None)
+EVENING_WORKERS = 4  # ponytail: у ISS свои rate limits, агрессивная параллельность -> 429/бан по IP
 
 
 def get_last_trading_day(max_lookback_days=10):
@@ -128,6 +132,9 @@ def _fetch_evening_session(date_str, secid):
     по барам, начавшимся с EVENING_FROM_HOUR. Возвращает (high, low) или
     (None, None) если данных/вечерки нет.
     """
+    key = (date_str, secid)
+    if key in _evening_cache:
+        return _evening_cache[key]
     try:
         resp = requests.get(
             _CANDLES_URL.format(board=_BOARD, secid=secid),
@@ -139,9 +146,11 @@ def _fetch_evening_session(date_str, secid):
         cols = candles.get("columns", [])
         rows = candles.get("data", [])
         if not cols or not rows:
+            _evening_cache[key] = (None, None)
             return None, None
         idx = {c: i for i, c in enumerate(cols)}
         if not all(c in idx for c in ("begin", "high", "low", "end")):
+            _evening_cache[key] = (None, None)
             return None, None
 
         highs, lows = [], []
@@ -159,9 +168,13 @@ def _fetch_evening_session(date_str, secid):
                 pass
 
         if not highs:
+            _evening_cache[key] = (None, None)
             return None, None
-        return max(highs), min(lows)
+        result = (max(highs), min(lows))
+        _evening_cache[key] = result
+        return result
     except requests.RequestException:
+        _evening_cache[key] = (None, None)
         return None, None
 
 
@@ -201,6 +214,9 @@ def scan_atr(atr_threshold, date=None):
     if not columns or not rows:
         return {"error": f"Нет данных торгов за {target_date}", "date": target_date}
 
+    if _evening_cache and next(iter(_evening_cache))[0] != target_date:
+        _evening_cache.clear()
+
     col_idx = {c: i for i, c in enumerate(columns)}
 
     def col(row, name):
@@ -211,7 +227,7 @@ def scan_atr(atr_threshold, date=None):
     step_dict, equity_secids = _get_minstep_metadata()
     keep_all = not equity_secids  # при сбое метаданных не отсеиваем ничего
 
-    results = []
+    selected = []
     for row in rows:
         secid = col(row, "SECID")
         if not secid:
@@ -249,20 +265,42 @@ def scan_atr(atr_threshold, date=None):
             direction = None
 
         atr_pct = (high - low) / close * 100 if close else 0.0
-        evening_high, evening_low = _fetch_evening_session(target_date, secid)
-        results.append({
-            "ticker": secid,
+        selected.append({
+            "secid": secid,
             "name": col(row, "SHORTNAME") or secid,
-            "atr_points": round(atr_points, 2),
-            "atr_pct": round(atr_pct, 2),
-            "close": round(close, 2),
-            "high": round(high, 2),
-            "low": round(low, 2),
-            "evening_high": round(evening_high, 2) if evening_high is not None else None,
-            "evening_low": round(evening_low, 2) if evening_low is not None else None,
+            "step": step,
+            "close": close,
+            "atr_points": atr_points,
+            "atr_pct": atr_pct,
+            "high": high,
+            "low": low,
             "value": value,
             "direction": direction,
         })
+
+    results = []
+    with ThreadPoolExecutor(max_workers=EVENING_WORKERS) as pool:
+        futures = {
+            pool.submit(_fetch_evening_session, target_date, s["secid"]): s
+            for s in selected
+        }
+        for fut in as_completed(futures):
+            s = futures[fut]
+            evening_high, evening_low = fut.result()
+            results.append({
+                "ticker": s["secid"],
+                "name": s["name"],
+                "step": round(s["step"], 6),
+                "atr_points": round(s["atr_points"], 2),
+                "atr_pct": round(s["atr_pct"], 2),
+                "close": round(s["close"], 2),
+                "high": round(s["high"], 2),
+                "low": round(s["low"], 2),
+                "evening_high": round(evening_high, 2) if evening_high is not None else None,
+                "evening_low": round(evening_low, 2) if evening_low is not None else None,
+                "value": s["value"],
+                "direction": s["direction"],
+            })
 
     results.sort(key=lambda r: r["atr_points"], reverse=True)
     return {

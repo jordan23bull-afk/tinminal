@@ -312,7 +312,7 @@
 }
 
 .wl-delete:hover {
-  color: #ef5350;
+  color: var(--accent-red);
 }
 
 .watchlist-item:hover .wl-delete {
@@ -328,19 +328,19 @@
 }
 
 .watchlist-item.wl-error {
-  background: rgba(239, 83, 80, 0.12);
+  background: var(--accent-red-bg);
 }
 
 .watchlist-item.wl-error .wl-symbol {
-  color: #ef5350;
+  color: var(--accent-red);
 }
 
 .watchlist-item.wl-loading {
-  background: rgba(255, 179, 0, 0.08);
+  background: rgba(247, 166, 0, 0.08);
 }
 
 .watchlist-item.wl-loading .wl-symbol {
-  color: #ffb300;
+  color: var(--accent-yellow);
 }
 
 .watchlist-item.wl-live .wl-symbol {
@@ -358,7 +358,7 @@
   font-weight: bold;
   color: white;
   flex-shrink: 0;
-  background: #26a69a;
+  background: var(--accent-green);
 }
 
 .wl-symbol {

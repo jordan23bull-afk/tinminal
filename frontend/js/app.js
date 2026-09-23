@@ -1,7 +1,7 @@
 import { ChartManager } from "./chart-manager.js";
 import { WSClient } from "./ws-client.js";
 import { LayoutManager } from "./layout-manager.js";
-import { generateId, log } from "./utils.js";
+import { generateId, log, cssVar } from "./utils.js";
 import { calcIndicator, mergeIndicators, loadCustomIndicators } from "./indicators.js";
 import { loadTickers, saveTickers, addTicker, removeTicker, toggleFlag, getTickerFlag, loadFlags, saveFlags, refreshAllSymbolDropdowns } from "./tickers.js";
 import { loadFromServer, flushNow } from "./storage.js";
@@ -174,6 +174,11 @@ wsClient.connect();
 let currentFilter = "all";
 
 let activeFlagColor = null;
+const FLAG_COLORS = {
+  red: cssVar("--accent-red"),
+  green: cssVar("--accent-green"),
+  yellow: cssVar("--accent-yellow"),
+};
 
 function createWatchlistItemEl(ticker, source) {
   const div = document.createElement("div");
@@ -182,7 +187,7 @@ function createWatchlistItemEl(ticker, source) {
   div.dataset.source = source;
   const flag = getTickerFlag(ticker);
   div.dataset.flag = flag || "";
-  const flagStyle = flag ? ` style="background:${flag === "red" ? "#ef5350" : flag === "green" ? "#26a69a" : "#ffb300"}"` : "";
+  const flagStyle = flag ? ` style="background:${FLAG_COLORS[flag]}"` : "";
   div.innerHTML = `<div class="wl-col wl-col-symbol"><span class="wl-flag-left"${flagStyle}></span><div class="wl-icon">${ticker.charAt(0)}</div><span class="wl-symbol">${ticker}</span></div><div class="wl-col wl-col-change"><span class="wl-change">—</span></div><div class="wl-col wl-col-volume"><span class="wl-price">—</span></div>`;
   setupWatchlistItem(div);
   const flagEl = div.querySelector(".wl-flag-left");
@@ -194,7 +199,7 @@ function createWatchlistItemEl(ticker, source) {
       div.dataset.flag = "";
     } else if (activeFlagColor) {
       toggleFlag(ticker, activeFlagColor);
-      flagEl.style.background = activeFlagColor === "red" ? "#ef5350" : activeFlagColor === "green" ? "#26a69a" : "#ffb300";
+      flagEl.style.background = FLAG_COLORS[activeFlagColor];
       div.dataset.flag = activeFlagColor;
     }
     if (currentFilter !== "all") renderWatchlist();
@@ -235,12 +240,16 @@ function setupWatchlistItem(item) {
     item.classList.add("selected");
     const symbol = item.dataset.symbol;
     const source = normalizeSource(item.dataset.source || "tinkoff");
-    let activeId = chartManager.activeChartId;
-    if (!activeId && chartManager.charts.size > 0) {
-      activeId = chartManager.getAllChartIds()[0];
-      chartManager.setActiveChart(activeId);
+    if (chartManager.charts.size === 0) {
+      loadHistory(null, symbol, null, source);
+    } else {
+      let activeId = chartManager.activeChartId;
+      if (!activeId && chartManager.charts.size > 0) {
+        activeId = chartManager.getAllChartIds()[0];
+        chartManager.setActiveChart(activeId);
+      }
+      chartManager.changeSymbol(symbol, source, activeId);
     }
-    chartManager.changeSymbol(symbol, source, activeId);
     symbolInput.value = symbol;
     sourceSelect.value = source;
   });
@@ -274,15 +283,30 @@ renderWatchlist();
 // "+" button in watchlist
 const addTickerBtn = document.querySelector(".watchlist-header .icon-btn-sm");
 if (addTickerBtn) {
-  addTickerBtn.addEventListener("click", () => {
+  addTickerBtn.addEventListener("click", async () => {
     const input = prompt("Введите тикер (например TATN, ROSN, BANE):");
     if (!input) return;
     const ticker = input.toUpperCase().trim();
     if (!ticker) return;
-    if (addTicker(ticker, ticker)) {
+    try {
+      const res = await fetch(`/api/lookup?symbol=${encodeURIComponent(ticker)}`);
+      if (res.status === 404) {
+        alert(`Тикер ${ticker} не найден на бирже`);
+        return;
+      }
+      if (!res.ok) {
+        alert(`Не удалось проверить тикер ${ticker}. Попробуйте ещё раз.`);
+        return;
+      }
+      const data = await res.json();
+      if (!addTicker(data.ticker || ticker, data.name || ticker)) {
+        alert(`Тикер ${ticker} уже есть в вочлисте`);
+        return;
+      }
       renderWatchlist();
-    } else {
-      alert(`Тикер ${ticker} уже есть в вочлисте`);
+    } catch (e) {
+      log("Ticker lookup error:", e);
+      alert(`Не удалось проверить тикер ${ticker}`);
     }
   });
 }
