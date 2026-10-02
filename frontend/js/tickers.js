@@ -3,7 +3,7 @@ const FLAGS_KEY = "trading-dashboard-flags";
 
 const FORTS_MONTHS = new Set("FGHJKMNQUVXZ");
 const FORTS_EXACT = new Set(["IMOEXF", "RTS", "RI", "BR"]);
-const INDEX_TICKERS = new Set(["IMOEX", "IMOEX2", "MOEX", "MOEX2", "RTSI", "RTSI2"]);
+const INDEX_TICKERS = new Set(["IMOEX", "IMOEX2", "RTSI", "RTSI2"]);
 
 function detectBoard(ticker) {
   const t = ticker.toUpperCase();

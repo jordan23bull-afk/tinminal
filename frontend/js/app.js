@@ -99,7 +99,6 @@ function setTickerStatus(symbol, status) {
   if (item) {
     item.classList.toggle("wl-loading", status === "loading");
     item.classList.toggle("wl-error", status === "error");
-    item.classList.toggle("wl-live", status === "live" && isActiveChartSymbol(symbol));
     item.title = TICKER_STATUS_LABEL[status] || status;
   }
 }
@@ -110,7 +109,9 @@ function isActiveChartSymbol(symbol) {
 }
 
 function syncWatchlistLiveStatus() {
-  document.querySelectorAll(".watchlist-item.wl-live").forEach(item => {
+  // зелёный = символ активного графика, и только он; раньше селектор .wl-live
+  // не давал включить подсветку на тикере, который её ещё не имел
+  document.querySelectorAll(".watchlist-item").forEach(item => {
     item.classList.toggle("wl-live", isActiveChartSymbol(item.dataset.symbol));
   });
 }

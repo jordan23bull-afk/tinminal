@@ -99,6 +99,7 @@ export class ChartManager {
     this._magnetOn = false;
     this.alerts = this._loadAlerts();
     this.autoLevels = this._loadAutoLevels();
+    this._linesBySymbol = {};
     this.ui = new ChartUI(this);
     this.sync = { symbol: true, timeframe: true, crosshair: true, time: false, dateRange: false };
     setInterval(() => this._tickPoc(), 1000);
@@ -549,13 +550,20 @@ export class ChartManager {
     for (const [id, chartObj] of this.charts) {
       const update = id === sourceId || this.sync.symbol;
       if (!update) continue;
-      if (chartObj.config.symbol !== symbol) this.removeAllHorizontalLines(id);
+      const changed = chartObj.config.symbol !== symbol;
+      if (changed) {
+        this._stashLines(id, chartObj);
+        this.removeAllHorizontalLines(id);
+      }
       chartObj.config.symbol = symbol;
+      if (changed) this._restoreLines(id, chartObj);
       chartObj.config.source = source;
       const btn = chartObj.container.querySelector(".ch-symbol-btn");
       if (btn) btn.textContent = symbol;
       this.onChartChange(id, symbol, chartObj.config.timeframe, source, chartObj.chartType);
     }
+    // символ активного графика изменился — подсветка тикера должна уехать вместе с ним
+    if (this.onActiveChartChange) this.onActiveChartChange(this.activeChartId);
   }
 
   changeTimeframe(timeframe, sourceId) {
@@ -730,7 +738,7 @@ export class ChartManager {
       case "area":
         return chart.addAreaSeries({ topColor: "rgba(41, 98, 255, 0.4)", bottomColor: "rgba(41, 98, 255, 0.0)", lineColor: "#2962FF", lineWidth: 2, priceLineVisible: true, lastValueVisible: true });
       case "bar":
-        return chart.addBarSeries({ upColor: "#089982", downColor: "#f23645", borderVisible: false, priceLineVisible: true, lastValueVisible: true });
+        return chart.addBarSeries({ upColor: "#089982", downColor: "#f23645", borderVisible: false, thinBars: false, priceLineVisible: true, lastValueVisible: true });
       default:
         return chart.addCandlestickSeries({ upColor: "#089982", downColor: "#f23645", borderVisible: false, wickUpColor: "#089982", wickDownColor: "#f23645", priceLineVisible: true, lastValueVisible: true });
     }
@@ -920,6 +928,30 @@ export class ChartManager {
     chartObj._horizontalLines = [];
   }
 
+  // линии живут в памяти графика и сносились при смене тикера; stash/restore
+  // держат их по тикеру, addHorizontalLine дедуплицирует по цене — повторный
+  // вызов applyAutoLevelsForSymbol дублей не создаст
+  _stashLines(chartId, chartObj) {
+    const symbol = chartObj.config.symbol;
+    if (!symbol) return;
+    const saved = this._linesBySymbol[symbol] || (this._linesBySymbol[symbol] = []);
+    for (const line of chartObj._horizontalLines) {
+      const o = line.options();
+      if (o.price == null) continue;
+      const price = o.price;
+      if (saved.some(s => Math.abs(s.price - price) < this._priceTol(chartObj))) continue;
+      saved.push({ price, color: o.color, lineWidth: o.lineWidth, lineStyle: o.lineStyle });
+    }
+  }
+
+  _restoreLines(chartId, chartObj) {
+    const saved = this._linesBySymbol[chartObj.config.symbol];
+    if (!saved) return;
+    for (const l of saved) {
+      this.addHorizontalLine(chartId, l.price, { color: l.color, lineWidth: l.lineWidth, lineStyle: l.lineStyle, ownerSymbol: chartObj.config.symbol });
+    }
+  }
+
   clearAllScannerData() {
     for (const id of this.getAllChartIds()) {
       this.removeAllHorizontalLines(id);
@@ -928,6 +960,7 @@ export class ChartManager {
     this._saveAlerts();
     this.autoLevels = {};
     this._saveAutoLevels();
+    this._linesBySymbol = {};
     log("Cleared all levels, alerts and auto levels");
   }
 
@@ -942,6 +975,7 @@ export class ChartManager {
     this._saveAlerts();
     delete this.autoLevels[symbol];
     this._saveAutoLevels();
+    delete this._linesBySymbol[symbol];
     try {
       const scanFlags = JSON.parse(localStorage.getItem("trading-scan-flags") || "{}");
       if (scanFlags[symbol]) {
