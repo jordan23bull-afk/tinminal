@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- Адрес раскладки живёт в пути (/chart/<id>/), поэтому относительные ссылки
+       на скрипты и стили иначе разрешались бы в /chart/<id>/js/... и давали 404.
+       base href возвращает все относительные адреса в корень сайта. -->
+  <base href="/">
+  <title>Local Trading Dashboard</title>
+  <link rel="stylesheet" href="css/themes.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/toolbar.css">
+  <link rel="stylesheet" href="css/sidebar.css">
+  <script src="js/lightweight-charts.standalone.production.js"></script>
+  <script src="js/socket.io.min.js"></script>
+</head>
+<body class="theme-dark">
+  <div class="app-container">
+
+    <!-- Top Toolbar -->
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <input type="hidden" id="symbol-input" value="">
+        <input type="hidden" id="source-select" value="tinkoff">
+      </div>
+      <div class="toolbar-right">
+        <button class="tool-btn" id="clear-all-btn" title="Удалить все уровни, алерты, флажки (все тикеры)">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M5.5 4V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1M4 4l.7 8a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9L12 4M6.5 7v4M9.5 7v4"/></svg>
+        </button>
+        <button class="tool-btn" id="atr-scan-btn" title="ATR-сканер MOEX">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13V9M6 13V5M10 13V7M14 13V3"/></svg>
+        </button>
+        <div class="layout-selector" id="layout-selector">
+          <button class="layout-trigger" id="layout-trigger" title="Раскладка графиков">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <rect x="1" y="1" width="6" height="6" rx="1"/>
+              <rect x="9" y="1" width="6" height="6" rx="1"/>
+              <rect x="1" y="9" width="6" height="6" rx="1"/>
+              <rect x="9" y="9" width="6" height="6" rx="1"/>
+            </svg>
+            <span class="layout-trigger-text" id="layout-trigger-text">1</span>
+          </button>
+          <div class="layout-dropdown hidden" id="layout-dropdown">
+            <div class="layout-grid" id="layout-grid"></div>
+            <div class="layout-sync">
+              <div class="layout-sync-title">Синхронизация</div>
+              <label class="layout-sync-item">
+                <span>Инструмент</span>
+                <input type="checkbox">
+              </label>
+              <label class="layout-sync-item">
+                <span>Интервал</span>
+                <input type="checkbox">
+              </label>
+              <label class="layout-sync-item">
+                <span>Перекрестие</span>
+                <input type="checkbox">
+              </label>
+              <label class="layout-sync-item">
+                <span>Время</span>
+                <input type="checkbox">
+              </label>
+              <label class="layout-sync-item">
+                <span>Диапазон дат</span>
+                <input type="checkbox">
+              </label>
+            </div>
+          </div>
+        </div>
+        <button class="tool-btn" id="watchlist-toggle" title="Скрыть/показать список">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="14" height="14" rx="2"/><line x1="10" y1="1" x2="10" y2="15"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="main-content">
+
+      <!-- Left Sidebar - Drawing Tools -->
+      <aside class="sidebar-left">
+        <button class="tool-btn active" data-tool="crosshair" title="Crosshair">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="9" y1="0" x2="9" y2="18"/><line x1="0" y1="9" x2="18" y2="9"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="trendline" title="Trend Line">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="2" y1="16" x2="16" y2="2"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="fib" title="Fibonacci">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.2"><line x1="2" y1="3" x2="16" y2="3"/><line x1="2" y1="7" x2="16" y2="7"/><line x1="2" y1="11" x2="16" y2="11"/><line x1="2" y1="15" x2="16" y2="15"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="horizontal" title="Horizontal Line">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="0" y1="9" x2="18" y2="9" stroke-dasharray="3 2"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="rectangle" title="Rectangle">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="5" width="12" height="8" rx="1"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="text" title="Text">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><text x="4" y="14" font-size="14" font-weight="bold">T</text></svg>
+        </button>
+        <div class="tool-separator"></div>
+        <button class="tool-btn" data-tool="brush" title="Brush">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 15c2-4 4-8 7-10s4 0 5-2"/></svg>
+        </button>
+        <button class="tool-btn" data-tool="eraser" title="Eraser">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7 16h8M3 11l4 4 8-8-4-4-8 8z"/></svg>
+        </button>
+        <div class="tool-separator"></div>
+        <button class="tool-btn" id="magnet-btn" title="Magnet">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2v6a4 4 0 008 0V2M4 2h4M10 2h4"/></svg>
+        </button>
+        <div class="tool-separator"></div>
+        <button class="tool-btn" id="clear-drawings-btn" title="Очистить рисунки">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6h12M7 6V4h4v2M5 6v9a1 1 0 001 1h6a1 1 0 001-1V6"/></svg>
+        </button>
+        <div class="tool-separator"></div>
+        <button class="tool-btn" id="undo-btn" title="Отменить (Ctrl+Z)" disabled>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9h9a4 4 0 010 8H8M3 9l4-4M3 9l4 4"/></svg>
+        </button>
+        <button class="tool-btn" id="redo-btn" title="Повторить (Ctrl+Y)" disabled>
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M15 9H6a4 4 0 000 8h4M15 9l-4-4M15 9l-4 4"/></svg>
+        </button>
+      </aside>
+
+      <!-- Chart Area -->
+      <main id="charts-grid" class="charts-grid">
+      </main>
+
+      <!-- Right Sidebar - Watchlist -->
+      <aside class="sidebar-right">
+        <div class="sidebar-resize-handle" id="sidebar-resize"></div>
+        <div class="watchlist-header">
+          <span class="watchlist-title" id="wl-filter-trigger">Список котировок</span>
+          <div class="wl-flag-modes">
+            <span class="wl-flag-mode" data-color="red" style="background:var(--accent-red)"></span>
+            <span class="wl-flag-mode" data-color="green" style="background:var(--accent-green)"></span>
+            <span class="wl-flag-mode" data-color="yellow" style="background:var(--accent-yellow)"></span>
+          </div>
+          <button class="icon-btn-sm">+</button>
+          <div class="wl-filter-dropdown hidden" id="wl-filter-dropdown">
+            <div class="wl-filter-item active" data-filter="all">
+              <span style="width:12px"></span>
+              <span>Все тикеры</span>
+            </div>
+            <div class="wl-filter-item" data-filter="red">
+              <span class="wl-flag-dot" style="background:var(--accent-red)"></span>
+              <span>Красный список</span>
+            </div>
+            <div class="wl-filter-item" data-filter="green">
+              <span class="wl-flag-dot" style="background:var(--accent-green)"></span>
+              <span>Зеленый список</span>
+            </div>
+            <div class="wl-filter-item" data-filter="yellow">
+              <span class="wl-flag-dot" style="background:var(--accent-yellow)"></span>
+              <span>Желтый список</span>
+            </div>
+          </div>
+        </div>
+        <div class="wl-columns-header" id="wl-columns-header">
+          <div class="wl-col wl-col-symbol" data-col="symbol">Инструмент<div class="wl-col-resize" data-col="symbol"></div></div>
+          <div class="wl-col wl-col-change" data-col="change">Изм. в %<div class="wl-col-resize" data-col="change"></div></div>
+          <div class="wl-col wl-col-volume" data-col="volume">Цена<div class="wl-col-resize" data-col="volume"></div></div>
+        </div>
+        <div class="watchlist-items" id="watchlist-items">
+        </div>
+
+      </aside>
+
+    </div>
+
+    <!-- Bottom Status Bar -->
+    <footer class="statusbar">
+      <div class="statusbar-left">
+        <span id="status-text">Ready</span>
+        <span class="status-sep">|</span>
+        <span id="status-connection" class="status-disconnected">Disconnected</span>
+      </div>
+      <div class="statusbar-center">
+        <div class="bottom-timeframe-buttons">
+          <button data-btf="1D">1Д</button>
+          <button data-btf="5D">5Д</button>
+          <button data-btf="1M">1М</button>
+          <button data-btf="3M">3М</button>
+          <button data-btf="6M">6М</button>
+          <button data-btf="YTD">YTD</button>
+          <button data-btf="1Y">1Г</button>
+          <button data-btf="5Y">5Л</button>
+          <button data-btf="ALL" class="active">Все</button>
+        </div>
+      </div>
+      <div class="statusbar-right">
+        <span id="current-time">14:57:08 UTC+3</span>
+      </div>
+    </footer>
+
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,455 @@
+/* Left Sidebar - Drawing Tools */
+.sidebar-left {
+  width: var(--sidebar-left-width);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 0;
+  gap: 1px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.tool-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.tool-btn.active {
+  color: var(--accent-blue);
+  background: var(--bg-active);
+}
+
+/* Отменить и повторить нельзя, когда нечего: курсор и вид это показывают. */
+.tool-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.tool-btn:disabled:hover {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.tool-separator {
+  width: 20px;
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+/* Right Sidebar - Watchlist */
+.sidebar-right {
+  width: var(--sidebar-right-width);
+  background: var(--bg-secondary);
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.active {
+  background: var(--accent-blue);
+}
+
+.watchlist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-color);
+  position: relative;
+}
+
+.watchlist-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.watchlist-title::after {
+  content: "▾";
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.wl-filter-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+
+.wl-filter-dropdown.hidden { display: none; }
+
+.wl-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.wl-filter-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.wl-filter-item.active {
+  background: var(--bg-active);
+}
+
+.wl-flag-left {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.3);
+  transition: opacity 0.15s, box-shadow 0.15s;
+  display: inline-block;
+  background-color: rgba(255,255,255,0.15);
+  margin: -5px;
+  padding: 5px;
+  background-clip: content-box;
+  opacity: 1;
+}
+
+.wl-flag-left:hover {
+  opacity: 0.7;
+  box-shadow: 0 0 6px rgba(255,255,255,0.5);
+}
+
+.wl-flag-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.wl-flag-modes {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.wl-flag-mode {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  cursor: pointer;
+  opacity: 0.35;
+  transition: all 0.15s;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.wl-flag-mode:hover {
+  opacity: 0.7;
+  transform: scale(1.15);
+}
+
+.wl-flag-mode.active {
+  opacity: 1;
+  box-shadow: 0 0 6px currentColor;
+  border-color: rgba(255,255,255,0.4);
+}
+
+.wl-columns-header {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  user-select: none;
+}
+
+.wl-col {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.wl-columns-header .wl-col {
+  padding: 6px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  position: relative;
+  overflow: visible;
+}
+
+.wl-columns-header .wl-col-symbol {
+  flex: 1 1 0;
+  min-width: 60px;
+}
+
+.wl-columns-header .wl-col-change {
+  flex: 0 1 0;
+  width: 70px;
+  min-width: 50px;
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.wl-columns-header .wl-col-volume {
+  flex: 0 1 0;
+  width: 60px;
+  min-width: 40px;
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.wl-col-resize {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 5;
+}
+
+.wl-col-resize:hover {
+  background: var(--accent-blue);
+}
+
+.watchlist-items .watchlist-item .wl-col-symbol {
+  flex: 1 1 0;
+  min-width: 60px;
+  padding-left: 3px;
+}
+
+.watchlist-items .watchlist-item .wl-icon {
+  margin-left: 2px;
+}
+
+.watchlist-items .watchlist-item .wl-col-change {
+  flex: 0 1 0;
+  width: 70px;
+  min-width: 50px;
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.watchlist-items .watchlist-item .wl-col-volume {
+  flex: 0 1 0;
+  width: 60px;
+  min-width: 40px;
+  text-align: right;
+  justify-content: flex-end;
+}
+
+.watchlist-items {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.wl-group-header {
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.watchlist-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 6px;
+  cursor: pointer;
+  transition: background var(--transition);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.wl-delete {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px;
+  margin-left: 10px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.wl-delete:hover {
+  color: var(--accent-red);
+}
+
+.watchlist-item:hover .wl-delete {
+  display: block;
+}
+
+.watchlist-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.watchlist-item.selected {
+  background: var(--bg-active);
+}
+
+.watchlist-item.wl-error {
+  background: var(--accent-red-bg);
+}
+
+.watchlist-item.wl-error .wl-symbol {
+  color: var(--accent-red);
+}
+
+.watchlist-item.wl-loading {
+  background: rgba(247, 166, 0, 0.08);
+}
+
+.watchlist-item.wl-loading .wl-symbol {
+  color: var(--accent-yellow);
+}
+
+.watchlist-item.wl-live .wl-symbol {
+  color: var(--accent-green);
+}
+
+.wl-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: bold;
+  color: white;
+  flex-shrink: 0;
+  background: var(--accent-green);
+}
+
+.wl-symbol {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.wl-price {
+  font-size: 10px;
+  color: var(--text-secondary);
+}
+
+.wl-change {
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.wl-change.positive {
+  color: var(--accent-green);
+}
+
+.wl-change.negative {
+  color: var(--accent-red);
+}
+
+/* Price Info at bottom of watchlist */
+
+
+.current-price {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.price-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent-green);
+  letter-spacing: 0.5px;
+}
+
+.price-currency {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.price-change {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.change-abs {
+  color: var(--accent-green);
+}
+
+.change-pct {
+  color: var(--accent-green);
+}
+
+.chart-settings-btn {
+  position: absolute;
+  bottom: 4px;
+  right: 30px;
+  z-index: 5;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 6px;
+  transition: all var(--transition);
+}
+
+.chart-settings-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border-light);
+}

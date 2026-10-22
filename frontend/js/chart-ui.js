@@ -1,0 +1,734 @@
+import { log } from "./utils.js";
+import { INDICATOR_TYPES, INDICATORS, loadCustomIndicators, saveCustomIndicators, mergeIndicators, getDeletedIndicators } from "./indicators.js";
+import { loadTickers, buildSymbolItemEl } from "./tickers.js";
+import { store } from "./store.js";
+import { getTool } from "./drawings/tools/registry.js";
+import { eventToLocal } from "./drawings/coords.js";
+import { hitHLine, hitLevel } from "./drawings/hittest.js";
+import { levelsWithout } from "./drawings/levels.js";
+import { CHART_SETTINGS_DEFAULTS } from "./constants.js";
+
+
+
+const TIMEFRAMES = [
+  { tf: "1m", label: "1m" },
+  { tf: "5m", label: "5m" },
+  { tf: "10m", label: "10m" },
+  { tf: "15m", label: "15m" },
+  { tf: "30m", label: "30m" },
+  { tf: "1h", label: "1ч" },
+  { tf: "2h", label: "2ч" },
+  { tf: "4h", label: "4ч" },
+  { tf: "1d", label: "Д" },
+];
+
+export class ChartUI {
+  constructor(manager) {
+    this.m = manager;
+    this._ctxMenu = null;
+    this._ctxData = null;
+    this._initContextMenu();
+  }
+
+  _initContextMenu() {
+    this._ctxMenu = document.createElement("div");
+    this._ctxMenu.className = "hline-ctx hidden";
+    document.body.appendChild(this._ctxMenu);
+    document.addEventListener("click", () => this._ctxMenu.classList.add("hidden"));
+  }
+
+  showContextMenu(e, chartId, object, target) {
+    const chartObj = this.m.charts.get(chartId);
+    // Уровень автоуровня: своя цена в поле данных, набор инструментов
+    // для линии не подходит.
+    if (object?.kind === "auto_level") {
+      this._showLevelContextMenu(e, chartId, object, target);
+      return;
+    }
+    const price = object?.data?.price;
+    if (price == null) return;
+    const tol = this.m._priceTol(chartObj);
+    const existing = this.m.alerts.find(a => a.chartId === chartId && Math.abs(a.price - price) < tol);
+    let html = "";
+    html += `<div class="hline-ctx-item" data-action="edit-line">Изменить</div>`;
+    if (!existing) {
+      html += `<div class="hline-ctx-item" data-action="add-alert">Добавить алерт</div>`;
+    } else {
+      html += `<div class="hline-ctx-item" data-action="remove-alert">Удалить алерт</div>`;
+    }
+    html += `<div class="hline-ctx-item hline-ctx-danger" data-action="remove-line">Удалить линию</div>`;
+    this._ctxMenu.innerHTML = html;
+    this._ctxData = { chartId, object, price };
+    this._ctxMenu.style.left = e.clientX + "px";
+    this._ctxMenu.style.top = e.clientY + "px";
+    this._ctxMenu.classList.remove("hidden");
+    this._ctxMenu.querySelectorAll(".hline-ctx-item").forEach(item => {
+      item.addEventListener("click", () => {
+        const action = item.dataset.action;
+        if (action === "add-alert") this.m.addAlert(chartId, price);
+        else if (action === "remove-alert") this.m.removeAlert(chartId, price);
+        else if (action === "remove-line") this.m.sendDrawingCommand({ kind: "object.delete", id: object.id });
+        else if (action === "edit-line") this._editLine(chartId, object);
+        this._ctxMenu.classList.add("hidden");
+      });
+    });
+  }
+
+  /**
+   * Меню уровня автоуровня: у него своя цена в поле данных, а набор
+   * действий для линии не подходит.
+   */
+  _showLevelContextMenu(e, chartId, object, target) {
+    const field = target?.field;
+    if (!field) return;
+    let html = "";
+    html += `<div class="hline-ctx-item" data-action="remove-level">Удалить уровень</div>`;
+    this._ctxMenu.innerHTML = html;
+    this._ctxData = { chartId, object, field };
+    this._ctxMenu.style.left = e.clientX + "px";
+    this._ctxMenu.style.top = e.clientY + "px";
+    this._ctxMenu.classList.remove("hidden");
+    this._ctxMenu.querySelectorAll(".hline-ctx-item").forEach(item => {
+      item.addEventListener("click", () => {
+        if (item.dataset.action === "remove-level") {
+          this.m.sendDrawingCommand({
+            kind: "object.set_auto_levels",
+            symbol: object.symbol,
+            timeframe: object.timeframe,
+            levels: levelsWithout(object, field),
+          });
+        }
+        this._ctxMenu.classList.add("hidden");
+      });
+    });
+  }
+
+  _editLine(chartId, object) {
+    const price = object?.data?.price;
+    if (price == null) return;
+    const style = object.style || {};
+    this.showLineSettingsDialog(chartId, price, (newOpts) => {
+      // Правка стиля — тоже команда: иначе сервер не узнает
+      // про новый вид линии.
+      this.m.sendDrawingCommand({
+        kind: "object.update",
+        id: object.id,
+        style: { color: newOpts.color, lineWidth: newOpts.lineWidth, lineStyle: newOpts.lineStyle }
+      });
+    }, style);
+  }
+
+  showLineSettingsDialog(chartId, price, onApply, currentOpts = {}) {
+    const s = currentOpts;
+    const overlay = document.createElement("div");
+    overlay.className = "ind-modal-overlay";
+    const modal = document.createElement("div");
+    modal.className = "ind-modal";
+    modal.innerHTML = `
+      <h3>Настройки линии</h3>
+      <label>Цвет</label>
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="color" id="ls-color" value="${s.color || '#2196F3'}" style="width:40px;height:26px;border:none;background:none;cursor:pointer">
+        <span id="ls-color-val" style="font-size:11px;color:var(--text-secondary)">${s.color || '#2196F3'}</span>
+      </div>
+      <label>Толщина</label>
+      <input type="number" id="ls-width" min="1" max="4" value="${s.lineWidth || 1}">
+      <label>Стиль</label>
+      <select id="ls-style">
+        <option value="0" ${s.lineStyle === 0 ? 'selected' : ''}>Сплошная</option>
+        <option value="1" ${s.lineStyle === 1 ? 'selected' : ''}>Точки</option>
+        <option value="2" ${s.lineStyle === 2 || s.lineStyle == null ? 'selected' : ''}>Штрихи</option>
+        <option value="3" ${s.lineStyle === 3 ? 'selected' : ''}>Штрих-пунктир</option>
+      </select>
+      <div class="ind-modal-btns">
+        <button class="ind-cancel">Отмена</button>
+        <button class="ind-save">Применить</button>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    modal.querySelector("#ls-color").addEventListener("input", function() {
+      modal.querySelector("#ls-color-val").textContent = this.value;
+    });
+
+    modal.querySelector(".ind-cancel").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    modal.querySelector(".ind-save").addEventListener("click", () => {
+      const opts = {
+        color: modal.querySelector("#ls-color").value,
+        lineWidth: Number(modal.querySelector("#ls-width").value) || 1,
+        lineStyle: Number(modal.querySelector("#ls-style").value),
+      };
+      overlay.remove();
+      onApply(opts);
+    });
+  }
+
+  buildHeader(id) {
+    const header = document.createElement("div");
+    header.className = "chart-header";
+
+    const chartObj = this.m.charts.get(id);
+    const cfg = chartObj ? chartObj.config : {};
+
+    const symbolBtn = document.createElement("button");
+    symbolBtn.className = "ch-symbol-btn";
+    symbolBtn.textContent = cfg.symbol || "BTCUSDT";
+    symbolBtn.dataset.chartId = id;
+
+    const symbolDropdown = document.createElement("div");
+    symbolDropdown.className = "ch-symbol-dropdown hidden";
+    symbolDropdown.dataset.chartId = id;
+    document.body.appendChild(symbolDropdown);
+
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.className = "ch-symbol-search";
+    searchInput.placeholder = "Поиск...";
+    symbolDropdown.appendChild(searchInput);
+
+    const list = document.createElement("div");
+    list.className = "ch-symbol-list";
+    loadTickers().forEach(s => list.appendChild(buildSymbolItemEl(s)));
+    symbolDropdown.appendChild(list);
+
+    symbolBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.m.setActiveChart(id);
+      document.querySelectorAll(".ch-symbol-dropdown").forEach(d => {
+        if (d !== symbolDropdown) d.classList.add("hidden");
+      });
+      symbolDropdown.classList.toggle("hidden");
+      if (!symbolDropdown.classList.contains("hidden")) {
+        const rect = symbolBtn.getBoundingClientRect();
+        symbolDropdown.style.position = "fixed";
+        symbolDropdown.style.top = rect.bottom + "px";
+        symbolDropdown.style.left = rect.left + "px";
+        symbolDropdown.style.zIndex = "10000";
+        searchInput.value = "";
+        searchInput.focus();
+        list.querySelectorAll(".ch-symbol-item").forEach(i => i.style.display = "");
+      }
+    });
+
+    searchInput.addEventListener("input", () => {
+      const q = searchInput.value.toUpperCase();
+      list.querySelectorAll(".ch-symbol-item").forEach(item => {
+        const match = item.dataset.ticker.includes(q) || item.querySelector(".ch-si-name").textContent.toUpperCase().includes(q);
+        item.style.display = match ? "" : "none";
+      });
+    });
+
+    // делегированный клик на списке: переживает innerHTML="" в refreshAllSymbolDropdowns
+    list.addEventListener("click", (e) => {
+      const item = e.target.closest(".ch-symbol-item");
+      if (!item) return;
+      const ticker = item.dataset.ticker;
+      const source = item.dataset.source;
+      symbolBtn.textContent = ticker;
+      symbolDropdown.classList.add("hidden");
+      this.m.setActiveChart(id);
+      this.m.changeSymbol(ticker, source, id);
+    });
+
+    const tfContainer = document.createElement("div");
+    tfContainer.className = "ch-tf-buttons";
+    TIMEFRAMES.forEach(t => {
+      const btn = document.createElement("button");
+      btn.className = "ch-tf-btn" + (t.tf === (cfg.timeframe || "1h") ? " active" : "");
+      btn.textContent = t.label;
+      btn.dataset.tf = t.tf;
+      btn.addEventListener("click", () => {
+        this.m.setActiveChart(id);
+        tfContainer.querySelectorAll(".ch-tf-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        this.m.changeTimeframe(t.tf, id);
+      });
+      tfContainer.appendChild(btn);
+    });
+
+    const typeSelect = document.createElement("select");
+    typeSelect.className = "ch-type-select";
+    ["candlestick", "line", "area", "bar"].forEach(t => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t.charAt(0).toUpperCase() + t.slice(1);
+      if (t === (cfg.chartType || "candlestick")) opt.selected = true;
+      typeSelect.appendChild(opt);
+    });
+    typeSelect.addEventListener("change", () => {
+      this.m.setActiveChart(id);
+      this.m.changeChartType(id, typeSelect.value);
+      this.m._updateChartConfig(id, { chartType: typeSelect.value });
+    });
+
+    const indContainer = document.createElement("div");
+    indContainer.className = "ch-ind-buttons";
+    this.renderIndicatorButtons(indContainer, id, cfg);
+
+    const addIndBtn = document.createElement("button");
+    addIndBtn.className = "ch-ind-btn";
+    addIndBtn.textContent = "+";
+    addIndBtn.title = "Создать индикатор";
+    addIndBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.m.setActiveChart(id);
+      this.showIndicatorModal(id);
+    });
+    indContainer.appendChild(addIndBtn);
+
+    header.appendChild(symbolBtn);
+    header.appendChild(tfContainer);
+    header.appendChild(typeSelect);
+    header.appendChild(indContainer);
+
+    return header;
+  }
+
+  showChartSettings(id) {
+    const chartObj = this.m.charts.get(id);
+    if (!chartObj) return;
+    const settings = this.m._getChartSettings();
+
+    const defaults = CHART_SETTINGS_DEFAULTS;
+    const s = { ...defaults, ...settings };
+
+    const overlay = document.createElement("div");
+    overlay.className = "ind-modal-overlay";
+    const modal = document.createElement("div");
+    modal.className = "ind-modal";
+    modal.innerHTML = `
+      <h3>Настройки графика</h3>
+      <label>Цвет свечей вверх</label>
+      <div class="chart-settings-color"><input type="color" id="cs-up" value="${s.upColor}"><span>${s.upColor}</span></div>
+      <label>Цвет свечей вниз</label>
+      <div class="chart-settings-color"><input type="color" id="cs-down" value="${s.downColor}"><span>${s.downColor}</span></div>
+      <label>Фон графика</label>
+      <div class="chart-settings-color"><input type="color" id="cs-bg" value="${s.bgColor}"><span>${s.bgColor}</span></div>
+      <label>Цвет сетки</label>
+      <div class="chart-settings-color"><input type="color" id="cs-grid" value="${s.gridColor}"><span>${s.gridColor}</span></div>
+      <label>Фитиль вверх</label>
+      <div class="chart-settings-color"><input type="color" id="cs-wickup" value="${s.wickUpColor}"><span>${s.wickUpColor}</span></div>
+      <label>Фитиль вниз</label>
+      <div class="chart-settings-color"><input type="color" id="cs-wickdown" value="${s.wickDownColor}"><span>${s.wickDownColor}</span></div>
+      <div class="ind-modal-btns">
+        <button class="ind-cancel">Отмена</button>
+        <button class="ind-reset" id="cs-reset">Сбросить</button>
+        <button class="ind-save">Применить</button>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    modal.querySelectorAll("input[type=color]").forEach(inp => {
+      inp.addEventListener("input", () => { inp.nextElementSibling.textContent = inp.value; });
+    });
+
+    modal.querySelector(".ind-cancel").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    modal.querySelector("#cs-reset").addEventListener("click", () => {
+      const d = { up: defaults.upColor, down: defaults.downColor, bg: defaults.bgColor, grid: defaults.gridColor, wickup: defaults.wickUpColor, wickdown: defaults.wickDownColor };
+      Object.entries(d).forEach(([k, v]) => {
+        const inp = modal.querySelector(`#cs-${k}`);
+        if (inp) { inp.value = v; inp.nextElementSibling.textContent = v; }
+      });
+    });
+
+    modal.querySelector(".ind-save").addEventListener("click", () => {
+      const newSettings = {
+        upColor: modal.querySelector("#cs-up").value,
+        downColor: modal.querySelector("#cs-down").value,
+        bgColor: modal.querySelector("#cs-bg").value,
+        gridColor: modal.querySelector("#cs-grid").value,
+        wickUpColor: modal.querySelector("#cs-wickup").value,
+        wickDownColor: modal.querySelector("#cs-wickdown").value,
+      };
+      this.m._saveChartSettings(newSettings);
+      // Оформление одно на весь терминал: меняем все панели сразу.
+      this.m.applyChartSettingsToAll(newSettings);
+      overlay.remove();
+    });
+  }
+
+  renderIndicatorButtons(container, chartId, cfg) {
+    container.querySelectorAll(".ch-ind-btn[data-indicator]").forEach(b => b.remove());
+    INDICATORS.forEach(ind => {
+      const btn = document.createElement("button");
+      btn.className = "ch-ind-btn";
+      btn.textContent = ind.label;
+      btn.dataset.indicator = ind.id;
+      if (cfg._activeIndicators && cfg._activeIndicators.includes(ind.id)) {
+        btn.classList.add("active");
+      }
+      btn.addEventListener("click", () => {
+        this.m.setActiveChart(chartId);
+        this.m._toggleIndicator(chartId, ind.id);
+        btn.classList.toggle("active");
+      });
+      btn.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (confirm(`Удалить индикатор "${ind.label}"?`)) {
+          this.deleteCustomIndicator(ind.id, chartId, container, cfg);
+        }
+      });
+      container.insertBefore(btn, container.lastChild);
+    });
+  }
+
+  deleteCustomIndicator(indId, chartId, container, cfg) {
+    const chartObj = this.m.charts.get(chartId);
+    if (chartObj && chartObj.indicators[indId]) {
+      chartObj.chart.removeSeries(chartObj.indicators[indId]);
+      delete chartObj.indicators[indId];
+      cfg._activeIndicators = (cfg._activeIndicators || []).filter(i => i !== indId);
+    }
+    const custom = loadCustomIndicators().filter(c => c.id !== indId);
+    saveCustomIndicators(custom);
+    if (!indId.startsWith("custom_")) {
+      const deleted = getDeletedIndicators();
+      if (!deleted.includes(indId)) {
+        deleted.push(indId);
+        localStorage.setItem("trading-dashboard-deleted-indicators", JSON.stringify(deleted));
+      }
+    }
+    mergeIndicators();
+    this.renderIndicatorButtons(container, chartId, cfg);
+  }
+
+  showIndicatorModal(chartId) {
+    const overlay = document.createElement("div");
+    overlay.className = "ind-modal-overlay";
+
+    const modal = document.createElement("div");
+    modal.className = "ind-modal";
+    modal.innerHTML = `
+      <h3>Новый индикатор</h3>
+      <label>Тип</label>
+      <select id="ind-type">
+        ${INDICATOR_TYPES.map(t => `<option value="${t.id}">${t.label}</option>`).join("")}
+        <option value="custom">Свой</option>
+      </select>
+      <div id="ind-params"></div>
+      <div id="ind-custom-fields" style="display:none">
+        <label>Параметры (JSON)</label>
+        <textarea id="ind-params-json" rows="3" placeholder='{"period": 14, "offset": 0}'>{"period": 14}</textarea>
+        <label>Формула (на каждый бар)</label>
+        <textarea id="ind-formula" rows="5" placeholder="// Доступно: candles, i, c, params&#10;// c = candles[i], верни число&#10;c.close"></textarea>
+        <div style="font-size:10px;color:var(--text-secondary);margin-top:4px">
+          Примеры:<br>
+          SMA: <code>closes.slice(i-p+1, i+1).reduce((s,x)=>s+x,0)/p</code><br>
+          EMA: <code>prev = c.close*k + prev*(1-k)</code><br>
+          RSI: <code>100 - 100/(1 + gains/losses)</code><br>
+          <code>closes</code>, <code>highs</code>, <code>lows</code>, <code>volumes</code> — массивы значений
+        </div>
+      </div>
+      <label>Имя</label>
+      <input id="ind-name" placeholder="Мое_индикатора_14">
+      <div class="ind-modal-btns">
+        <button class="ind-cancel">Отмена</button>
+        <button class="ind-save">Сохранить</button>
+      </div>
+    `;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const typeSelect = modal.querySelector("#ind-type");
+    const paramsDiv = modal.querySelector("#ind-params");
+    const customFields = modal.querySelector("#ind-custom-fields");
+    const nameInput = modal.querySelector("#ind-name");
+
+    const renderParams = () => {
+      const isCustom = typeSelect.value === "custom";
+      customFields.style.display = isCustom ? "" : "none";
+      paramsDiv.style.display = isCustom ? "none" : "";
+      paramsDiv.innerHTML = "";
+      const type = INDICATOR_TYPES.find(t => t.id === typeSelect.value);
+      if (!type || isCustom) return;
+      type.params.forEach(p => {
+        const label = document.createElement("label");
+        label.textContent = p.label;
+        const input = document.createElement("input");
+        input.type = "number";
+        input.value = p.default;
+        input.dataset.key = p.key;
+        paramsDiv.appendChild(label);
+        paramsDiv.appendChild(input);
+      });
+      if (type.extra) {
+        type.extra.forEach(ex => {
+          const label = document.createElement("label");
+          label.textContent = ex.label;
+          if (ex.type === "color") {
+            const wrap = document.createElement("div");
+            wrap.style.display = "flex";
+            wrap.style.alignItems = "center";
+            wrap.style.gap = "6px";
+            const input = document.createElement("input");
+            input.type = "color";
+            input.value = ex.default;
+            input.dataset.extra = ex.key;
+            input.style.width = "40px";
+            input.style.height = "26px";
+            input.style.border = "none";
+            input.style.background = "none";
+            input.style.cursor = "pointer";
+            const span = document.createElement("span");
+            span.textContent = ex.default;
+            span.style.fontSize = "11px";
+            span.style.color = "var(--text-secondary)";
+            input.addEventListener("input", () => { span.textContent = input.value; });
+            wrap.appendChild(label);
+            wrap.appendChild(input);
+            wrap.appendChild(span);
+            paramsDiv.appendChild(wrap);
+          } else if (ex.type === "select") {
+            paramsDiv.appendChild(label);
+            const select = document.createElement("select");
+            select.dataset.extra = ex.key;
+            ex.options.forEach(o => {
+              const opt = document.createElement("option");
+              opt.value = o.value;
+              opt.textContent = o.label;
+              select.appendChild(opt);
+            });
+            paramsDiv.appendChild(select);
+          } else {
+            paramsDiv.appendChild(label);
+            const input = document.createElement("input");
+            input.type = "number";
+            input.value = ex.default;
+            input.dataset.extra = ex.key;
+            paramsDiv.appendChild(input);
+          }
+        });
+      }
+      nameInput.placeholder = type.label;
+    };
+    typeSelect.addEventListener("change", renderParams);
+    renderParams();
+
+    modal.querySelector(".ind-cancel").addEventListener("click", () => overlay.remove());
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    modal.querySelector(".ind-save").addEventListener("click", () => {
+      const type = typeSelect.value;
+      const isCustom = type === "custom";
+
+      if (isCustom) {
+        const name = nameInput.value.trim();
+        if (!name) { alert("Введите имя индикатора"); return; }
+        const paramsJson = modal.querySelector("#ind-params-json").value.trim();
+        const formula = modal.querySelector("#ind-formula").value.trim();
+        if (!formula) { alert("Введите формулу"); return; }
+
+        let params = {};
+        try { params = JSON.parse(paramsJson); } catch(e) { alert("Неверный JSON параметров: " + e.message); return; }
+
+        const id = "custom_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+
+        try {
+          const testFn = new Function("candles", "i", "c", "params", "closes", "highs", "lows", "volumes", "prev", "emaCalc", "return (" + formula + ")");
+          const testCandles = [{ time: 0, open: 1, high: 2, low: 0, close: 1, volume: 1 }];
+          testFn(testCandles, 0, testCandles[0], params, [1], [2], [0], [1], { value: 1 }, null);
+        } catch(e) {
+          alert("Ошибка в формуле: " + e.message);
+          return;
+        }
+
+        const custom = loadCustomIndicators();
+        custom.push({ id, label: name, type: "custom", params, formula });
+        saveCustomIndicators(custom);
+        mergeIndicators();
+
+        const chartObj = this.m.charts.get(chartId);
+        if (chartObj) {
+          const container = chartObj.container.querySelector(".ch-ind-buttons");
+          if (container) this.renderIndicatorButtons(container, chartId, chartObj.config);
+        }
+        overlay.remove();
+      } else {
+        const typeName = INDICATOR_TYPES.find(t => t.id === type)?.label || type;
+        const name = nameInput.value.trim() || typeName;
+        const id = "custom_" + name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+        const params = {};
+        paramsDiv.querySelectorAll("input[data-key]").forEach(inp => { params[inp.dataset.key] = Number(inp.value) || 0; });
+        const extra = {};
+        paramsDiv.querySelectorAll("select[data-extra]").forEach(sel => { extra[sel.dataset.extra] = sel.value; });
+        paramsDiv.querySelectorAll("input[data-extra]").forEach(inp => {
+          extra[inp.dataset.extra] = inp.type === "color" ? inp.value : (Number(inp.value) || 0);
+        });
+
+        const custom = loadCustomIndicators();
+        custom.push({ id, label: name, type, params, extra });
+        saveCustomIndicators(custom);
+        mergeIndicators();
+
+        const chartObj = this.m.charts.get(chartId);
+        if (chartObj) {
+          const container = chartObj.container.querySelector(".ch-ind-buttons");
+          if (container) this.renderIndicatorButtons(container, chartId, chartObj.config);
+        }
+        overlay.remove();
+      }
+    });
+  }
+
+  bindChartInteractions(id, body, chartObj) {
+    const tooltip = document.createElement("div");
+    tooltip.className = "candle-tooltip hidden";
+    body.appendChild(tooltip);
+
+    const fmtPrice = (v) => (v == null || isNaN(v)) ? "-" : Number(v).toFixed(2);
+
+    chartObj.chart.subscribeCrosshairMove((param) => {
+      if (!param || !param.time || !param.seriesData) {
+        tooltip.classList.add("hidden");
+        return;
+      }
+      const data = param.seriesData.get(chartObj.mainSeries);
+      if (!data || typeof data !== "object" || !("open" in data)) {
+        tooltip.classList.add("hidden");
+        return;
+      }
+      const timeStr = (typeof param.time === "object")
+        ? `${String(param.time.year)}-${String(param.time.month).padStart(2,"0")}-${String(param.time.day).padStart(2,"0")}`
+        : new Date(param.time * 1000).toLocaleString("ru-RU", { timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+      const dir = data.close >= data.open;
+      tooltip.innerHTML = `
+        <div class="ct-title">${timeStr} <span class="ct-dir ${dir ? 'up' : 'down'}">${dir ? '▲' : '▼'}</span></div>
+        <div class="ct-row"><span>Откр</span><b>${fmtPrice(data.open)}</b></div>
+        <div class="ct-row"><span>Макс</span><b>${fmtPrice(data.high)}</b></div>
+        <div class="ct-row"><span>Мин</span><b>${fmtPrice(data.low)}</b></div>
+        <div class="ct-row"><span>Закр</span><b>${fmtPrice(data.close)}</b></div>
+        ${data.volume !== undefined ? `<div class="ct-row"><span>Объём</span><b>${data.volume}</b></div>` : ""}
+      `;
+      tooltip.classList.remove("hidden");
+      tooltip.style.left = (this._ttX || 20) + "px";
+      tooltip.style.top = (this._ttY || 20) + "px";
+    });
+
+    const onTooltipMove = (e) => {
+      const rect = body.getBoundingClientRect();
+      this._ttX = e.clientX - rect.left + 16;
+      this._ttY = e.clientY - rect.top + 16;
+      if (tooltip.classList.contains("hidden")) return;
+      tooltip.style.left = this._ttX + "px";
+      tooltip.style.top = this._ttY + "px";
+    };
+    body.addEventListener("mousemove", onTooltipMove);
+
+    // Рисование ведётся через реестр инструментов: chart-ui не знает
+    // ни про одну конкретную фигуру, новый инструмент добавляется рядом.
+    const activeTool = () => getTool(this.m._activeTool);
+
+    const toolContext = (event, chartIdLocal) => {
+      const idx = this.m.getAllChartIds().indexOf(chartIdLocal);
+      const hlines = store.objects
+        ? Array.from(store.objects.values()).filter(
+            (o) => o.kind === "hline" && o.symbol === chartObj.config.symbol
+          )
+        : [];
+      // Автоуровни сканера: цена каждого лежит в своём поле данных,
+      // поэтому инструментам нужен отдельный список.
+      const levels = store.objects
+        ? Array.from(store.objects.values()).filter(
+            (o) => o.kind === "auto_level" && o.symbol === chartObj.config.symbol
+          )
+        : [];
+      return {
+        chartObj,
+        chartId: chartIdLocal,
+        chartIndex: idx < 0 ? 0 : idx,
+        event,
+        hlines,
+        levels,
+        priceTolerance: this.m._priceTol(chartObj),
+        magnetOn: !!this.m._magnetOn,
+        hitHLine: () => {
+          const point = eventToLocal(chartObj, event);
+          return point ? hitHLine(chartObj, hlines, point) : null;
+        },
+        hitLevel: () => {
+          const point = eventToLocal(chartObj, event);
+          return point ? hitLevel(chartObj, levels, point) : null;
+        },
+        send: (payload) => this.m.sendDrawingCommand(payload)
+      };
+    };
+
+    const onToolPointerDown = (e) => {
+      const tool = activeTool();
+      if (!tool || tool.passive) return;
+      if (typeof tool.onPointerDown === "function") {
+        e.stopPropagation();
+        // Одноразовые инструменты снимают себя после действия — иначе
+        // режим рисования залипает. Стиралка и магнит залипают намеренно,
+        // поэтому сброс зависит от флага oneShot у инструмента.
+        Promise.resolve(tool.onPointerDown(toolContext(e, id)))
+          .catch((err) => console.error("[Drawings] инструмент упал:", err))
+          .finally(() => { if (tool.oneShot) this.m.resetTool?.(); });
+      }
+    };
+
+    const onToolPointerMove = (e) => {
+      const tool = activeTool();
+      if (!tool || typeof tool.onPointerMove !== "function") return;
+      tool.onPointerMove(toolContext(e, id));
+    };
+
+    const onToolPointerUp = (e) => {
+      const tool = activeTool();
+      if (!tool || typeof tool.onPointerUp !== "function") return;
+      tool.onPointerUp(toolContext(e, id));
+    };
+
+    body.addEventListener("pointerdown", onToolPointerDown, true);
+    body.addEventListener("pointermove", onToolPointerMove, true);
+    body.addEventListener("pointerup", onToolPointerUp, true);
+
+    chartObj._boundListeners = [
+      { target: body, handler: onToolPointerDown, capture: true },
+      { target: body, handler: onToolPointerMove, capture: true },
+      { target: body, handler: onToolPointerUp, capture: true },
+      { target: body, handler: onTooltipMove, capture: false },
+    ];
+
+    body.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const point = eventToLocal(chartObj, e);
+      const hlines = Array.from(store.objects?.values() || []).filter(
+        (o) => o.kind === "hline" && o.symbol === chartObj.config.symbol
+      );
+      const levels = Array.from(store.objects?.values() || []).filter(
+        (o) => o.kind === "auto_level" && o.symbol === chartObj.config.symbol
+      );
+      const target = point ? (hitHLine(chartObj, hlines, point) || hitLevel(chartObj, levels, point)) : null;
+      if (target) {
+        this.showContextMenu(e, id, target.object, target);
+      }
+    });
+
+    const gearBtn = document.createElement("button");
+    gearBtn.className = "chart-settings-btn";
+    gearBtn.textContent = "⚙";
+    gearBtn.title = "Настройки графика";
+    gearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.m.setActiveChart(id);
+      this.showChartSettings(id);
+    });
+    body.appendChild(gearBtn);
+  }
+
+  unbindChartInteractions(chartObj) {
+    if (!chartObj._boundListeners) return;
+    for (const { target, handler, capture } of chartObj._boundListeners) {
+      target.removeEventListener("mousedown", handler, capture);
+    }
+    chartObj._boundListeners = null;
+  }
+}

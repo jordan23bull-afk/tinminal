@@ -1,0 +1,153 @@
+import { log } from "./utils.js";
+import { TF_SECONDS, floorTs } from "./constants.js";
+import { API_BASE } from "./config.js";
+
+export class WSClient {
+  constructor(url = API_BASE) {
+    this.url = url;
+    this.socket = null;
+    this.subscriptions = new Map();
+    this.pocSubscriptions = new Map();
+    this.handlers = {
+      candleUpdate: [],
+      statusChange: [],
+      subscribed: [],
+      tickerError: [],
+      pocUpdate: [],
+      pocSnapshot: [],
+      alertFired: []
+    };
+    this.connected = false;
+    this._pendingUpdates = new Map();
+    this._flushTimer = null;
+  }
+
+  connect() {
+    if (this.socket && this.connected) return;
+
+    this.socket = io(this.url, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000
+    });
+
+    this.socket.on("connect", () => {
+      log("Socket.IO connected, id=" + this.socket.id);
+      this.connected = true;
+      this._resubscribeAll();
+      this._emit("statusChange", "connected");
+    });
+
+    this.socket.on("disconnect", (reason) => {
+      log("Socket.IO disconnected:", reason);
+      this.connected = false;
+      this._emit("statusChange", "disconnected");
+    });
+
+    this.socket.on("connect_error", (err) => {
+      log("Socket.IO error:", err.message);
+    });
+
+    this.socket.on("candle_update", (data) => {
+      const key = `${data.symbol}_${data.timeframe}`;
+      this._pendingUpdates.set(key, data);
+      if (!this._flushTimer) {
+        this._flushTimer = setTimeout(() => this._flushUpdates(), 16);
+      }
+    });
+
+    this.socket.on("subscribed", (data) => {
+      log("Subscribed to", data.room);
+      this._emit("subscribed", data);
+    });
+
+    this.socket.on("error", (data) => {
+      log("Server error:", data.msg);
+    });
+
+    this.socket.on("ticker_error", (data) => {
+      this._emit("tickerError", data);
+    });
+
+    this.socket.on("poc_update", (data) => {
+      this._emit("pocUpdate", data);
+    });
+
+    this.socket.on("poc_snapshot", (data) => {
+      this._emit("pocSnapshot", data);
+    });
+
+    // Сработавший алерт приходит с сервера: условие проверяет он же,
+    // клиент только показывает уведомление и звук.
+    this.socket.on("alert_fired", (data) => {
+      this._emit("alertFired", data);
+    });
+  }
+
+  subscribe(symbol, timeframe, source = "tinkoff") {
+    const room = `${symbol}_${timeframe}`;
+    this.subscriptions.set(room, { symbol, timeframe, source });
+    if (this.connected) {
+      this.socket.emit("subscribe", { symbol, timeframe, source });
+    }
+  }
+
+  unsubscribe(symbol, timeframe, source = "tinkoff") {
+    const room = `${symbol}_${timeframe}`;
+    this.subscriptions.delete(room);
+    if (this.connected) {
+      this.socket.emit("unsubscribe", { symbol, timeframe, source });
+    }
+  }
+
+  subscribePoc(symbol, windowMin = 30) {
+    const key = `poc:${symbol}:${windowMin}`;
+    this.pocSubscriptions.set(key, { symbol, windowMin });
+    if (this.connected) {
+      this.socket.emit("poc_subscribe", { symbol, windowMin });
+    }
+  }
+
+  unsubscribePoc(symbol, windowMin = 30) {
+    const key = `poc:${symbol}:${windowMin}`;
+    this.pocSubscriptions.delete(key);
+    if (this.connected) {
+      this.socket.emit("poc_unsubscribe", { symbol, windowMin });
+    }
+  }
+
+  on(event, callback) {
+    if (!this.handlers[event]) this.handlers[event] = [];
+    this.handlers[event].push(callback);
+  }
+
+  _emit(event, ...args) {
+    const list = this.handlers[event];
+    if (list) list.forEach(cb => cb(...args));
+  }
+
+  _flushUpdates() {
+    this._flushTimer = null;
+    const now = Math.floor(Date.now() / 1000);
+    for (const [key, data] of this._pendingUpdates) {
+      const tfSeconds = TF_SECONDS[data.timeframe] || 60;
+      if (data.candle && data.candle.time > floorTs(now, tfSeconds)) {
+        log(`Ignoring future candle time=${data.candle.time} for ${key}`);
+        continue;
+      }
+      this._emit("candleUpdate", data.symbol, data.timeframe, data.candle);
+    }
+    this._pendingUpdates.clear();
+  }
+
+  _resubscribeAll() {
+    if (!this.connected) return;
+    for (const [room, data] of this.subscriptions) {
+      this.socket.emit("subscribe", data);
+    }
+    for (const [, data] of this.pocSubscriptions) {
+      this.socket.emit("poc_subscribe", data);
+    }
+  }
+}

@@ -1,0 +1,67 @@
+import os
+import importlib
+import logging
+import threading
+from typing import Type, List
+
+from core.interfaces import IDataSource
+
+logger = logging.getLogger(__name__)
+
+
+class ModuleRegistry:
+    _data_sources = {}
+    _source_instances = {}
+    _lock = threading.Lock()
+
+    @classmethod
+    def register_data_source(cls, cls_type: Type[IDataSource]):
+        name = cls_type.name.fget(None) if isinstance(cls_type.name, property) else cls_type.name
+        if name in cls._data_sources:
+            return
+        cls._data_sources[name] = cls_type
+        logger.info(f"[Registry] Data source loaded: {name}")
+
+    @classmethod
+    def auto_load(cls, directory: str, prefix: str):
+        if not os.path.isdir(directory):
+            return
+        for f in os.listdir(directory):
+            if f.endswith(".py") and not f.startswith("_"):
+                try:
+                    full_module = f"{prefix}.{f[:-3]}"
+                    mod = importlib.import_module(full_module)
+                    for attr in dir(mod):
+                        obj = getattr(mod, attr)
+                        if isinstance(obj, type):
+                            if issubclass(obj, IDataSource) and obj is not IDataSource:
+                                cls.register_data_source(obj)
+                except Exception as e:
+                    logger.error(f"Failed to load {f}: {e}")
+
+    @classmethod
+    def get_data_source(cls, name: str) -> IDataSource:
+        if name not in cls._data_sources:
+            raise ValueError(f"Unknown data source: {name}")
+        with cls._lock:
+            if name not in cls._source_instances:
+                cls._source_instances[name] = cls._data_sources[name]()
+            return cls._source_instances[name]
+
+    @classmethod
+    def list_data_sources(cls) -> List[str]:
+        return list(cls._data_sources.keys())
+
+    @classmethod
+    def shutdown(cls):
+        """Shutdown all data source instances (close connections, channels, etc.)."""
+        with cls._lock:
+            for name, instance in cls._source_instances.items():
+                if hasattr(instance, "close"):
+                    try:
+                        instance.close()
+                        logger.info(f"[Registry] Closed data source: {name}")
+                    except Exception as e:
+                        logger.error(f"[Registry] Error closing {name}: {e}")
+            cls._source_instances.clear()
+            cls._data_sources.clear()
