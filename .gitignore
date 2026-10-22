@@ -29,7 +29,9 @@ backend/venv/
 Thumbs.db
 
 # Project data: token, candles database, settings, logs, rate limits
-data/
+# Only the token template is published; the real token stays local.
+data/*
+!data/tinkoff_token.example.txt
 settings.json
 candles.db
 candles.db-shm
