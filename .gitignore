@@ -60,3 +60,6 @@ docs/
 _check_*.py
 _check_*.cjs
 backend/core/selftest_*.py
+
+# Browser check artifacts (screenshots, snapshots, console logs)
+.playwright-mcp/

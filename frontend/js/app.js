@@ -114,6 +114,10 @@ function bindServerUi() {
       rebuildPanels(grid.count, grid, panelConfigs(grid.count));
     } else {
       layoutManager.applyGrid(grid);
+      // У одного числа панелей бывает несколько вариантов сетки: после
+      // отмены или чужой команды подсветка обязана переехать на тот
+      // вариант, который теперь стоит на экране.
+      currentLayoutOption = layoutManager.optionForGrid(grid);
     }
   });
 }
@@ -893,7 +897,9 @@ async function loadHistory(forceChartId = null, symbol = null, timeframe = null,
         }
 
         chartManager.updateData(chartId, data.candles, indicatorData);
-        chartManager.restoreAlertColors();
+        // Вид линии задаёт только store: снимок алертов, снятый до загрузки
+        // истории, мог вернуть сработавший алерт в прежнее состояние.
+        syncAlertsFromStore();
         // Линии и уровни нового символа рисуются из серверных объектов,
         // а не из локального кэша: после загрузки данных подтягиваем их заново.
         chartManager.onDrawingsChanged?.();
@@ -905,7 +911,7 @@ async function loadHistory(forceChartId = null, symbol = null, timeframe = null,
       chartObj.config._lastCandles = data.candles;
       if (data.tick) chartObj.config.tick = data.tick;
       chartManager.updateData(chartId, data.candles, indicatorData);
-      chartManager.restoreAlertColors();
+      syncAlertsFromStore();
       chartManager.onDrawingsChanged?.();
     }
 
@@ -936,16 +942,6 @@ const layoutDropdown = document.getElementById("layout-dropdown");
 const layoutGrid = document.getElementById("layout-grid");
 const layoutTriggerText = document.getElementById("layout-trigger-text");
 
-const LAYOUT_ICONS = {
-  1: [{ rows: 1, cols: 1 }],
-  2: [{ rows: 1, cols: 2 }, { rows: 2, cols: 1 }],
-  3: [{ rows: 1, cols: 3 }, { rows: 2, cols: 2 }, { rows: 2, cols: 2 }],
-  4: [{ rows: 2, cols: 2 }],
-  6: [{ rows: 2, cols: 3 }],
-  9: [{ rows: 3, cols: 3 }],
-  12: [{ rows: 4, cols: 3 }],
-};
-
 let currentLayoutCount = 1;
 let currentLayoutOption = 0;
 let layoutVersion = 0;
@@ -953,11 +949,15 @@ let layoutVersion = 0;
 function renderLayoutGrid() {
   layoutGrid.innerHTML = "";
 
+  // Кнопки строятся по той же таблице, что и сами сетки: отдельный список
+  // иконок разошёлся бы с ней, как только у числа панелей появится второй
+  // вариант (так добавлен 12 → 3 × 4).
+  const layouts = layoutManager.getLayouts();
   const counts = [1, 2, 3, 4, 6, 9, 12];
 
   counts.forEach(count => {
-    const icons = LAYOUT_ICONS[count];
-    if (!icons) return;
+    const variants = layouts[count];
+    if (!variants) return;
 
     const row = document.createElement("div");
     row.className = "layout-row";
@@ -970,7 +970,7 @@ function renderLayoutGrid() {
     const options = document.createElement("div");
     options.className = "layout-row-options";
 
-    icons.forEach((icon, idx) => {
+    variants.forEach((layout, idx) => {
       const btn = document.createElement("button");
       btn.className = "layout-option";
       if (count === currentLayoutCount && idx === currentLayoutOption) {
@@ -985,22 +985,18 @@ function renderLayoutGrid() {
       grid.style.height = "100%";
       grid.style.gap = "1px";
 
-      const layouts = layoutManager.getLayouts();
-      const layout = layouts[count]?.[idx];
-      if (layout) {
-        grid.style.gridTemplateColumns = `repeat(${layout.cols}, 1fr)`;
-        grid.style.gridTemplateRows = `repeat(${layout.rows}, 1fr)`;
+      grid.style.gridTemplateColumns = `repeat(${layout.cols}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${layout.rows}, 1fr)`;
 
-        let cellCount = 0;
-        for (const [rowSpan, colSpan] of layout.cells) {
-          if (cellCount >= count) break;
-          const cell = document.createElement("div");
-          cell.className = "cell";
-          cell.style.gridRow = `span ${rowSpan}`;
-          cell.style.gridColumn = `span ${colSpan}`;
-          grid.appendChild(cell);
-          cellCount++;
-        }
+      let cellCount = 0;
+      for (const [rowSpan, colSpan] of layout.cells) {
+        if (cellCount >= count) break;
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        cell.style.gridRow = `span ${rowSpan}`;
+        cell.style.gridColumn = `span ${colSpan}`;
+        grid.appendChild(cell);
+        cellCount++;
       }
 
       btn.appendChild(grid);
@@ -1045,12 +1041,17 @@ function panelConfigs(count) {
 function rebuildPanels(count, grid, panels) {
   const myVersion = ++layoutVersion;
 
+  // Сохраняем только локальные линии — те, что не пришли из store.
+  // Серверные (с _objectId) и автоуровни (с _autoLevel) после перестроения
+  // нарисует синхронизация: снимок без меток порождал рядом вторую линию,
+  // которую потом не узнавали ни store, ни ластик.
   const savedLinesPerSymbol = {};
   for (const [id, chartObj] of chartManager.charts) {
     const symbol = chartObj.config.symbol;
-    if (symbol && chartObj._horizontalLines.length > 0) {
+    const local = chartObj._horizontalLines.filter((l) => !l._objectId && !l._autoLevel);
+    if (symbol && local.length > 0) {
       if (!savedLinesPerSymbol[symbol]) savedLinesPerSymbol[symbol] = [];
-      savedLinesPerSymbol[symbol].push(...chartObj._horizontalLines.map(l => ({
+      savedLinesPerSymbol[symbol].push(...local.map(l => ({
         price: l.options().price,
         color: l.options().color,
         lineWidth: l.options().lineWidth,
@@ -1059,7 +1060,6 @@ function rebuildPanels(count, grid, panels) {
       })));
     }
   }
-  const savedAlerts = [...chartManager.alerts];
 
   const ids = chartManager.getAllChartIds();
   while (ids.length > 0) {
@@ -1094,6 +1094,11 @@ function rebuildPanels(count, grid, panels) {
   // вхолостую.
   if (newCharts.length > 0) chartManager.setActiveChart(newCharts[0].id);
 
+  // Серверные линии и автоуровни рисуем сразу, не дожидаясь истории: панель
+  // могла остаться без данных (нет токена, ошибка сети), а рисунок на ней
+  // всё равно обязан быть. Успешная загрузка истории синхронизирует ещё раз.
+  syncAllDrawings();
+
   const symbolToChartIds = {};
   for (const { id, cfg } of newCharts) {
     if (!symbolToChartIds[cfg.symbol]) symbolToChartIds[cfg.symbol] = [];
@@ -1120,13 +1125,10 @@ function rebuildPanels(count, grid, panels) {
         });
       });
     }
-    chartManager.alerts = savedAlerts.map(a => {
-      const chartIds = symbolToChartIds[a.symbol];
-      const newId = chartIds && chartIds[0];
-      return newId ? { ...a, chartId: newId } : a;
-    });
-    chartManager._saveAlerts();
-    chartManager.restoreAlertColors();
+    // Снимок алертов здесь не восстанавливаем: пока грузились истории,
+    // алерт мог сработать, и старый статус вернул бы сплошную линию.
+    // Источник истины — store, вид расставляет syncAlertsFromStore.
+    syncAlertsFromStore();
   });
 }
 
@@ -1193,13 +1195,18 @@ function saveState() {
       timeframe: chartObj.config.timeframe || "1h",
       chartType: chartObj.chartType || "candlestick",
       indicators: Object.keys(chartObj.indicators),
-      horizontalLines: chartObj._horizontalLines.map(l => ({
-        price: l.options().price,
-        color: l.options().color,
-        lineWidth: l.options().lineWidth,
-        lineStyle: l.options().lineStyle,
-        ownerSymbol: l._opts && l._opts.ownerSymbol,
-      }))
+      // В localStorage — только локальные линии. Серверные объекты и
+      // автоуровни живут на сервере; их копии в снимке потом переносились
+      // как безымянные hline и оставляли дубли рядом с настоящими линиями.
+      horizontalLines: chartObj._horizontalLines
+        .filter(l => !l._objectId && !l._autoLevel)
+        .map(l => ({
+          price: l.options().price,
+          color: l.options().color,
+          lineWidth: l.options().lineWidth,
+          lineStyle: l.options().lineStyle,
+          ownerSymbol: l._opts && l._opts.ownerSymbol,
+        }))
     });
   }
   const state = {
@@ -1307,7 +1314,7 @@ function restoreState(state) {
     // объекты и приезжают через store (см. syncDrawingsFromStore).
     // Старое состояние из localStorage используется только один раз —
     // при переносе, см. migrateLocalDrawings.
-    chartManager.restoreAlertColors();
+    syncAlertsFromStore();
   });
 
   return true;
@@ -1485,6 +1492,10 @@ let drawingsBound = false;
 function syncAllDrawings() {
   syncDrawingsFromStore();
   syncAutoLevelsFromStore();
+  // Вид линии задаёт ещё и состояние алерта: вооружённый — сплошная,
+  // сработавший — штрихи. Применяем последним, иначе перерисовка из
+  // store вернула бы вооружённой линии штрихи объекта.
+  syncAlertsFromStore();
 }
 
 function bindDrawings() {
@@ -1791,24 +1802,38 @@ function syncDrawingsFromStore() {
     }
 
     for (const obj of mine) {
-      const style = obj.style || {};
+      const price = obj.data?.price;
+      if (price == null) continue;
+      const base = obj.style || {};
+      // Действующий вид зависит не только от стиля объекта, но и от
+      // алерта на этом уровне. Сравнивать и создавать нужно по нему:
+      // иначе каждая общая перерисовка возвращала бы вооружённую линию
+      // к штрихам серверного объекта.
+      const style = { ...base, lineStyle: alertLineStyle(obj.symbol, price) };
+      const color = style.color || "#2196F3";
+      const lineWidth = style.lineWidth ?? 1;
+      const lineStyle = style.lineStyle ?? 2;
       const existing = managed.find((l) => l._objectId === obj.id);
       if (!existing) {
-        chartManager.addObjectLine(chartObj, obj);
+        chartManager.addObjectLine(chartObj, { ...obj, style });
         continue;
       }
       const opts = existing.options();
       const same =
-        opts.price === obj.data?.price &&
-        opts.color === style.color &&
-        opts.lineWidth === (style.lineWidth ?? 1) &&
-        opts.lineStyle === (style.lineStyle ?? 2);
+        opts.price === price &&
+        opts.color === color &&
+        opts.lineWidth === lineWidth &&
+        opts.lineStyle === lineStyle;
       if (same) continue;
+      // Вид и цену меняем на месте: пересоздание рвало метки _objectId
+      // и _autoLevel, и на графике появлялся дубль.
       try {
-        chartObj.mainSeries.removePriceLine(existing);
-      } catch (e) {}
-      chartObj._horizontalLines = chartObj._horizontalLines.filter((l) => l !== existing);
-      chartManager.addObjectLine(chartObj, obj);
+        existing.applyOptions({ price, color, lineWidth, lineStyle });
+      } catch (e) {
+        log("Не удалось изменить линию:", e);
+        continue;
+      }
+      existing._opts = { color, lineWidth, lineStyle, ownerSymbol: obj.symbol || chartObj.config.symbol };
     }
   }
 }

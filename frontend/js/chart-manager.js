@@ -164,10 +164,6 @@ export class ChartManager {
     }
   }
 
-  _saveAlerts() {
-    // Алерты живут на сервере; локальный кэш больше не используется.
-  }
-
   /**
    * Старый кэш уровней сканера. Нужен только для разового переноса
    * на сервер, см. migrateLegacyAutoLevels.
@@ -927,7 +923,17 @@ export class ChartManager {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
 
-    const savedLines = chartObj._horizontalLines.map(l => ({ price: l.options().price, ...(l._opts || {}) }));
+    // Линии живут на серии и умирают вместе с ней. Снимок обязан помнить
+    // не только цену и вид, но и метки: без _objectId/_autoLevel общая
+    // синхронизация не узнаёт линию и нарисует рядом вторую.
+    const savedLines = chartObj._horizontalLines
+      .map((l) => ({
+        price: l.options().price,
+        opts: { ...(l._opts || {}) },
+        objectId: l._objectId || null,
+        autoLevel: l._autoLevel ? { ...l._autoLevel } : null,
+      }))
+      .filter((l) => l.price != null);
     chartObj._horizontalLines = [];
     chartObj.chart.removeSeries(chartObj.mainSeries);
 
@@ -944,11 +950,46 @@ export class ChartManager {
       chartObj.chart.timeScale().scrollToPosition(5, false);
     }
 
-    for (const opts of savedLines) this.addHorizontalLine(id, opts.price, opts);
-    // Линии с новой серией нужно перерисовать из store: локальный кэш
-    // не знает про идентификаторы объектов.
+    // Восстанавливаем только на этой панели: addHorizontalLine разложил бы
+    // линии по всем панелям с тем же символом и снова потерял бы метки.
+    for (const saved of savedLines) this._restorePriceLine(chartObj, saved);
+    // Дальше состояние сверяется со store: вид линии зависит ещё и от
+    // алерта, поэтому источником истины остаётся серверный объект.
     this.onDrawingsChanged?.();
     log(`Chart ${id} type changed to ${newType}`);
+  }
+
+  /**
+   * Вернуть линию после пересоздания серии, сохранив её метки.
+   *
+   * createPriceLine создаёт новую линию, а идентификатор объекта и признак
+   * автоуровня живут в памяти. Без их переноса syncDrawingsFromStore и
+   * syncAlertsFromStore линию не узнают и нарисуют вторую.
+   */
+  _restorePriceLine(chartObj, saved) {
+    if (!chartObj?.mainSeries || saved?.price == null) return null;
+    const opts = saved.opts || {};
+    const color = opts.color || "#2196F3";
+    const lineWidth = opts.lineWidth ?? 1;
+    const lineStyle = opts.lineStyle ?? 2;
+    const line = chartObj.mainSeries.createPriceLine({
+      price: saved.price,
+      color,
+      lineWidth,
+      lineStyle,
+      axisLabelVisible: false,
+      title: ""
+    });
+    line._opts = {
+      color,
+      lineWidth,
+      lineStyle,
+      ownerSymbol: opts.ownerSymbol || chartObj.config.symbol
+    };
+    if (saved.objectId) line._objectId = saved.objectId;
+    if (saved.autoLevel) line._autoLevel = { ...saved.autoLevel };
+    chartObj._horizontalLines.push(line);
+    return line;
   }
 
   removeChart(id) {
@@ -1063,9 +1104,11 @@ export class ChartManager {
     if (!symbol) return;
     const saved = this._linesBySymbol[symbol] || (this._linesBySymbol[symbol] = []);
     for (const line of chartObj._horizontalLines) {
-      // Линии с _objectId хранятся на сервере: кэшировать их здесь не нужно,
-      // после смены символа они возвращаются синхронизацией из store.
-      if (line._objectId) continue;
+      // Линии с _objectId и автоуровни с _autoLevel хранятся на сервере:
+      // кэшировать их здесь не нужно, после смены символа они возвращаются
+      // синхронизацией из store. Иначе рядом с помеченной линией появлялся
+      // безымянный дубль, и он оставался сплошным после срабатывания алерта.
+      if (line._objectId || line._autoLevel) continue;
       const o = line.options();
       if (o.price == null) continue;
       const price = o.price;
@@ -1109,15 +1152,5 @@ export class ChartManager {
   }
 
   getAllChartIds() { return Array.from(this.charts.keys()); }
-
-  restoreAlertColors() {
-    for (const alert of this.alerts) {
-      // Сработавший алерт — штрихи, вооружённый — сплошная линия.
-      const style = alert.status === "fired" ? 2 : 0;
-      for (const [id, chartObj] of this.charts) {
-        if (chartObj.config.symbol === alert.symbol) this._updateLineColor(id, alert.price, null, null, style);
-      }
-    }
-  }
 }
 
