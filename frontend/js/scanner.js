@@ -1,4 +1,4 @@
-import { loadTickers, loadFlags, saveFlags } from "./tickers.js";
+import { loadTickers, loadFlags, saveFlags, removeTicker } from "./tickers.js";
 import { cssVar } from "./utils.js";
 import { api } from "./api.js";
 
@@ -57,6 +57,7 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
       </div>
       <div id="atr-result" style="margin-top:10px;font-size:12px;color:var(--text-secondary);min-height:18px"></div>
       <div id="atr-outside" style="margin-top:8px;display:none"></div>
+      <div id="atr-futures" style="margin-top:8px;display:none;font-size:12px"></div>
       <div class="ind-modal-btns">
         <button class="ind-cancel">Отмена</button>
         <button class="ind-save">Сканировать</button>
@@ -83,26 +84,41 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
 
     const confirmBtn = modal.querySelector(".ind-confirm");
 
-    async function applyResults(results) {
+    async function applyResults(wlResults, futResults) {
       const wlTickers = getWatchlistTickers();
       let buyCount = 0, sellCount = 0, skipped = 0;
       const nextScanFlags = {};
 
-      for (const r of results) {
+      // Флажок и цвет — одна операция: у акций и фьючерсов правило одно.
+      const put = (ticker, direction) => {
+        const color = direction === "buy" ? "green" : "red";
+        setFlagDirect(ticker, color);
+        nextScanFlags[ticker] = color;
+        if (direction === "buy") buyCount++;
+        else sellCount++;
+      };
+
+      const putLevels = (r) => {
+        if (!(r.high > 0) || !(r.low > 0)) return;
+        const step = r.step || 0;
+        // Уровни и алерты на них ставит сервер одной командой.
+        if (typeof chartManager._setAutoLevels === "function") {
+          chartManager._setAutoLevels(r.ticker, r.high + step, r.low - step, r.evening_high, r.evening_low);
+        }
+      };
+
+      for (const r of wlResults) {
         if (!r.direction) continue;
         if (!wlTickers.has(r.ticker)) { skipped++; continue; }
-        const color = r.direction === "buy" ? "green" : "red";
-        setFlagDirect(r.ticker, color);
-        nextScanFlags[r.ticker] = color;
-        if (r.high > 0 && r.low > 0) {
-          const step = r.step || 0;
-          // Уровни и алерты на них ставит сервер одной командой.
-          if (typeof chartManager._setAutoLevels === "function") {
-            chartManager._setAutoLevels(r.ticker, r.high + step, r.low - step, r.evening_high, r.evening_low);
-          }
-        }
-        if (r.direction === "buy") buyCount++;
-        else sellCount++;
+        put(r.ticker, r.direction);
+        putLevels(r);
+      }
+
+      // Фьючерсы из вочлиста — всегда: порог ATR к ним не применяется,
+      // а уровни ставятся даже без направления (OPEN == CLOSE).
+      for (const r of futResults) {
+        if (r.direction) put(r.ticker, r.direction);
+        putLevels(r);
       }
 
       clearStaleScanFlags(nextScanFlags);
@@ -110,7 +126,8 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
       if (syncTickerSubscriptions) syncTickerSubscriptions();
 
       const total = buyCount + sellCount;
-      return `Флаги проставлены: ${total} (${buyCount} покупка, ${sellCount} продажа) | ${skipped} не в вочлисте | дата: ${resultsDate}`;
+      const futPart = futResults.length ? ` | фьючерсы: ${futResults.length}` : "";
+      return `Флаги проставлены: ${total} (${buyCount} покупка, ${sellCount} продажа)${futPart} | ${skipped} не в вочлисте | дата: ${resultsDate}`;
     }
 
     let resultsDate = null;
@@ -118,19 +135,27 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
     modal.querySelector(".ind-save").addEventListener("click", async () => {
       const threshold = parseFloat(modal.querySelector("#atr-threshold").value) || 0;
       const dateVal = dateInput.value || null;
+      // Фьючерсы — только из вочлиста: на FORTS сотни контрактов, а нужны
+      // свои. Список уходит в том же запросе, что и скан акций.
+      const futTickers = loadTickers()
+        .filter(t => t.board === "FORTS")
+        .map(t => t.ticker);
       const resultEl = modal.querySelector("#atr-result");
       const scanBtn = modal.querySelector(".ind-save");
       const outsideEl = modal.querySelector("#atr-outside");
+      const futuresEl = modal.querySelector("#atr-futures");
       scanBtn.disabled = true;
       scanBtn.textContent = "Загрузка...";
       resultEl.textContent = "";
       outsideEl.style.display = "none";
       outsideEl.innerHTML = "";
+      futuresEl.style.display = "none";
+      futuresEl.innerHTML = "";
       confirmBtn.style.display = "none";
 
       try {
-        const data = await api.scanAtr(threshold, dateVal);
-        if (data.error) {
+        const data = await api.scanAtr(threshold, dateVal, futTickers);
+        if (data.error && !data.futures) {
           resultEl.textContent = data.error;
           resultEl.style.color = cssVar("--accent-red");
           scanBtn.disabled = false;
@@ -150,9 +175,24 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
           else wlResults.push(r);
         }
 
+        const futBlock = data.futures || {};
+        const futResults = (futBlock.results || []).filter(r => wlTickers.has(r.ticker));
+        const noData = futBlock.no_data || [];
+
+        // Просроченные и неизвестные контракты из вочлиста убираем сразу:
+        // за выбранную дату по ним уже нечего ставить, а в списке они
+        // остаются навсегда. Живые контракты без данных не трогаем.
+        const removed = futBlock.removed || [];
+        if (removed.length) {
+          for (const r of removed) removeTicker(r.ticker);
+          renderWatchlist();
+          if (syncTickerSubscriptions) syncTickerSubscriptions();
+        }
+
         resultEl.style.color = "";
         resultEl.textContent =
-          `Найдено: ${results.length} | в вочлисте: ${wlResults.length} | не в вочлисте: ${outside.length} | дата: ${data.date}`;
+          `Найдено: ${results.length} | в вочлисте: ${wlResults.length} | не в вочлисте: ${outside.length} | фьючерсы: ${futResults.length} | дата: ${data.date}` +
+          (data.error ? ` | акции: ${data.error}` : "");
 
         if (outside.length) {
           const html = outside.map(r =>
@@ -162,9 +202,25 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
           outsideEl.style.display = "block";
         }
 
+        if (futResults.length || noData.length || removed.length) {
+          const dirLabel = (d) => d === "buy" ? "покупка" : d === "sell" ? "продажа" : "без направления";
+          const lines = futResults.map(r =>
+            `<div>${r.ticker} — ${r.name} (${dirLabel(r.direction)}, ATR ${r.atr_points} п.)</div>`
+          ).join("");
+          const notes = [
+            ...noData.map(r => `<div>${r.ticker} — ${r.reason}</div>`),
+            ...removed.map(r => `<div>${r.ticker} — удалён из вочлиста (${r.reason})</div>`)
+          ].join("");
+          futuresEl.innerHTML =
+            `<b>Фьючерсы (всегда):</b><div style="max-height:140px;overflow:auto">${lines}</div>` +
+            (notes ? `<div style="margin-top:4px">${notes}</div>` : "");
+          futuresEl.style.display = "block";
+        }
+
         confirmBtn.style.display = "inline-block";
-        confirmBtn.textContent = `Подтвердить (${wlResults.length})`;
+        confirmBtn.textContent = `Подтвердить (${wlResults.length + futResults.length})`;
         confirmBtn.dataset.results = JSON.stringify(wlResults);
+        confirmBtn.dataset.futures = JSON.stringify(futResults);
       } catch (e) {
         resultEl.textContent = "Ошибка: " + e.message;
         resultEl.style.color = cssVar("--accent-red");
@@ -176,8 +232,9 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
     confirmBtn.addEventListener("click", async () => {
       try {
         const wlResults = JSON.parse(confirmBtn.dataset.results || "[]");
+        const futResults = JSON.parse(confirmBtn.dataset.futures || "[]");
         const resultEl = modal.querySelector("#atr-result");
-        resultEl.textContent = await applyResults(wlResults);
+        resultEl.textContent = await applyResults(wlResults, futResults);
         resultEl.style.color = "";
         confirmBtn.style.display = "none";
       } catch (e) {

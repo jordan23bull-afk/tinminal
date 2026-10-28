@@ -8,6 +8,7 @@ ATR-скринер MOEX.
 Источник логики: E:\\atrnew\\atr150.py (переписано без pandas).
 """
 
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -30,6 +31,27 @@ _CANDLES_URL = (
     "https://iss.moex.com/iss/engines/stock/markets/shares/"
     "boards/{board}/securities/{secid}/candles.json"
 )
+
+# Фьючерсы FORTS. Секция «акции» и секция «фьючерсы» — разные эндпоинты ISS,
+# общих полей у них только OHLCV. Тикер вочлиста совпадает с SECID Мосбиржи
+# с точностью до регистра (SiZ6 в ISS — SIZ6 в Tinkoff), поэтому справочник
+# сопоставляет их по верхнему регистру.
+_FUT_HISTORY_URL = (
+    "https://iss.moex.com/iss/history/engines/futures/markets/forts/"
+    "securities/{secid}.json"
+)
+_FUT_META_URL = (
+    "https://iss.moex.com/iss/engines/futures/markets/forts/securities.json"
+)
+_FUT_CANDLES_URL = (
+    "https://iss.moex.com/iss/engines/futures/markets/forts/"
+    "securities/{secid}/candles.json"
+)
+
+MAX_FUTURES = 40          # потолок списка из вочлиста, чтобы не молотить ISS
+FUT_META_TTL = 300        # справочник FORTS: 501 строка, держим 5 минут
+_forts_meta_cache = {"ts": 0.0, "data": {}}
+_TICKER_RE = re.compile(r"^[A-Z0-9]{2,12}$")
 
 EVENING_FROM_HOUR = 19  # вечерняя сессия начинается в 19:00 МСК
 
@@ -125,19 +147,22 @@ def _get_minstep_metadata():
         return {}, set()
 
 
-def _fetch_evening_session(date_str, secid):
+def _fetch_evening_session(date_str, secid, candles_url=_CANDLES_URL):
     """High/Low вечерней сессии (с 19:00 МСК до закрытия) за дату.
 
     Берёт часовые свечи MOEX (времена — МСК) и агрегирует max(HIGH)/min(LOW)
     по барам, начавшимся с EVENING_FROM_HOUR. Возвращает (high, low) или
     (None, None) если данных/вечерки нет.
+
+    Шаблон адреса — параметр: у акций и фьючерсов разные эндпоинты ISS,
+    агрегация и кэш у них общие.
     """
     key = (date_str, secid)
     if key in _evening_cache:
         return _evening_cache[key]
     try:
         resp = requests.get(
-            _CANDLES_URL.format(board=_BOARD, secid=secid),
+            candles_url.format(board=_BOARD, secid=secid),
             params={"interval": 60, "from": date_str, "till": date_str, "iss.meta": "off"},
             timeout=15,
         )
@@ -185,18 +210,209 @@ def _to_float(v):
         return float("nan")
 
 
-def scan_atr(atr_threshold, date=None):
+def _get_forts_metadata():
+    """Справочник фьючерсов FORTS: {UPPER(SECID): {...}}.
+
+    Нужен MINSTEP (пункты), STEPPRICE (рубли за шаг), LASTTRADEDATE (срок)
+    и настоящий SECID: у Si он смешанного регистра (`SiZ6`), и по нему
+    строятся адреса истории и свечей. Справочник большой и меняется редко,
+    поэтому кэшируется на FUT_META_TTL.
     """
-    Выполняет ATR-скрининг.
+    now = time.time()
+    cached = _forts_meta_cache["data"]
+    if cached and now - _forts_meta_cache["ts"] < FUT_META_TTL:
+        return cached
+    try:
+        resp = requests.get(_FUT_META_URL, params={"iss.meta": "off"}, timeout=20)
+        resp.raise_for_status()
+        table = resp.json().get("securities")
+        if not table or not table.get("data"):
+            return cached
+        cols = table["columns"]
+        idx = {c: i for i, c in enumerate(cols)}
+
+        def cell(row, name):
+            i = idx.get(name)
+            return row[i] if i is not None else None
+
+        out = {}
+        for row in table["data"]:
+            secid = cell(row, "SECID")
+            if not secid:
+                continue
+            step = _to_float(cell(row, "MINSTEP"))
+            if not (step > 0):
+                step = 1.0
+            price_step = _to_float(cell(row, "STEPPRICE"))
+            if not (price_step > 0):
+                price_step = 0.0
+            out[str(secid).upper()] = {
+                "secid": str(secid),
+                "name": cell(row, "SHORTNAME") or secid,
+                "step": step,
+                "step_price": price_step,
+                "expires": cell(row, "LASTTRADEDATE"),
+            }
+        _forts_meta_cache["ts"] = now
+        _forts_meta_cache["data"] = out
+        return out
+    except requests.RequestException:
+        return cached
+
+
+def _fetch_fort_day(secid, date_str):
+    """Строка дневной истории фьючерса за дату.
+
+    Возвращает (row, ok): ok=False — запрос к ISS не удался, и тогда
+    контракт нельзя считать просроченным, даже если строки нет.
+    Только `from`/`till`: параметр `date` у этого эндпоинта игнорируется
+    и возвращает историю с начала торгов контракта.
+    """
+    try:
+        resp = requests.get(
+            _FUT_HISTORY_URL.format(secid=secid),
+            params={"from": date_str, "till": date_str, "iss.meta": "off"},
+            timeout=20,
+        )
+        resp.raise_for_status()
+        hist = resp.json().get("history") or {}
+        cols = hist.get("columns") or []
+        rows = hist.get("data") or []
+        if not cols or not rows:
+            return None, True
+        idx = {c: i for i, c in enumerate(cols)}
+
+        def cell(row, name):
+            i = idx.get(name)
+            return row[i] if i is not None else None
+
+        row = rows[0]
+        return {
+            "secid": cell(row, "SECID") or secid,
+            "name": cell(row, "SHORTNAME"),
+            "open": _to_float(cell(row, "OPEN")),
+            "high": _to_float(cell(row, "HIGH")),
+            "low": _to_float(cell(row, "LOW")),
+            "close": _to_float(cell(row, "CLOSE")),
+            "volume": _to_float(cell(row, "VOLUME")),
+            "value": _to_float(cell(row, "VALUE")),
+        }, True
+    except requests.RequestException:
+        return None, False
+
+
+def scan_futures(tickers, date):
+    """ATR-скан фьючерсов из вочлиста за дату.
+
+    Порог ATR и фильтры ликвидности к фьючерсам не применяются: контракт
+    из вочлиста попадает в результат всегда, если за дату есть торговые
+    данные. Направление — CLOSE к OPEN, как у акций.
+
+    Просроченные контракты (срок раньше даты скана) и неизвестные тикеры
+    уходят в `removed` — клиент убирает их из вочлиста. Живой контракт без
+    данных за выбранную дату попадает в `no_data` и остаётся в вочлисте.
+    """
+    wanted = []
+    seen = set()
+    for t in tickers or []:
+        norm = str(t or "").strip().upper()
+        if not norm or norm in seen or not _TICKER_RE.match(norm):
+            continue
+        seen.add(norm)
+        wanted.append(norm)
+        if len(wanted) >= MAX_FUTURES:
+            break
+
+    if not wanted:
+        return {"results": [], "removed": [], "no_data": []}
+
+    if _evening_cache and next(iter(_evening_cache))[0] != date:
+        _evening_cache.clear()
+
+    meta = _get_forts_metadata()
+    results = []
+    removed = []
+    no_data = []
+
+    for ticker in wanted:
+        info = meta.get(ticker) or {}
+        secid = info.get("secid") or ticker
+        row, ok = _fetch_fort_day(secid, date)
+        expires = info.get("expires")
+
+        if not ok:
+            no_data.append({"ticker": ticker, "reason": "ISS не ответил"})
+            continue
+
+        high = row["high"] if row else float("nan")
+        low = row["low"] if row else float("nan")
+        close = row["close"] if row else float("nan")
+        open_ = row["open"] if row else float("nan")
+
+        if not row or not (high > 0) or not (low > 0) or not (close > 0):
+            # Справочник не получен — виноват ISS, а не контракт: ничего
+            # не удаляем, иначе сетевая ошибка вычистила бы вочлист.
+            if not meta:
+                no_data.append({"ticker": ticker, "reason": "справочник ISS недоступен"})
+            elif not info:
+                removed.append({"ticker": ticker, "reason": "контракт не найден"})
+            elif expires and expires < date:
+                removed.append({"ticker": ticker, "reason": "истёк " + expires})
+            else:
+                no_data.append({"ticker": ticker, "reason": "нет данных за " + date})
+            continue
+
+        if open_ > 0 and close > open_:
+            direction = "buy"
+        elif open_ > 0 and close < open_:
+            direction = "sell"
+        else:
+            direction = None
+
+        step = info.get("step") or 1.0
+        step_price = info.get("step_price") or 0.0
+        atr_points = (high - low) / step if step else 0.0
+        evening_high, evening_low = _fetch_evening_session(date, secid, _FUT_CANDLES_URL)
+
+        results.append({
+            "ticker": ticker,
+            "name": info.get("name") or row["name"] or ticker,
+            "step": round(step, 6),
+            "step_price": round(step_price, 6),
+            "atr_points": round(atr_points, 2),
+            "atr_rub": round(atr_points * step_price, 2),
+            "atr_pct": round((high - low) / close * 100, 2),
+            "close": round(close, 4),
+            "high": round(high, 4),
+            "low": round(low, 4),
+            "evening_high": round(evening_high, 4) if evening_high is not None else None,
+            "evening_low": round(evening_low, 4) if evening_low is not None else None,
+            "value": row["value"] if row["value"] == row["value"] else None,
+            "direction": direction,
+            "expires": expires,
+        })
+
+    results.sort(key=lambda r: r["atr_points"], reverse=True)
+    return {"results": results, "removed": removed, "no_data": no_data}
+
+
+def scan_atr(atr_threshold, date=None, futures=None):
+    """
+    Выполняет ATR-скрининг акций и фьючерсов из вочлиста.
 
     Возвращает dict:
         {
           "date": "...",
           "threshold": ...,
           "results": [ {ticker, name, atr_points, atr_pct, close, high, low,
-                        evening_high, evening_low, value, direction} ]
+                        evening_high, evening_low, value, direction} ],
+          "futures": {"results": [...], "removed": [...], "no_data": [...]}
         }
     direction: "buy" (CLOSE > OPEN), "sell" (CLOSE < OPEN), None (равно).
+
+    `futures` — тикеры контрактов FORTS из вочлиста. Они считаются всегда,
+    без порога ATR: у фьючерсов пункты разных контрактов несопоставимы,
+    и фильтровать их тем же числом, что акции, бессмысленно.
     """
     try:
         atr_threshold = float(atr_threshold)
@@ -210,9 +426,19 @@ def scan_atr(atr_threshold, date=None):
         if not target_date:
             return {"error": "Не удалось определить последний торговый день"}
 
+    fut_block = None
+    if futures:
+        try:
+            fut_block = scan_futures(futures, target_date)
+        except Exception as e:  # фьючерсы не должны ронять скан акций
+            fut_block = {"error": str(e), "results": [], "removed": [], "no_data": []}
+
     columns, rows = _fetch_moex_history(target_date)
     if not columns or not rows:
-        return {"error": f"Нет данных торгов за {target_date}", "date": target_date}
+        result = {"error": f"Нет данных торгов за {target_date}", "date": target_date}
+        if fut_block is not None:
+            result["futures"] = fut_block
+        return result
 
     if _evening_cache and next(iter(_evening_cache))[0] != target_date:
         _evening_cache.clear()
@@ -280,12 +506,12 @@ def scan_atr(atr_threshold, date=None):
 
     results = []
     with ThreadPoolExecutor(max_workers=EVENING_WORKERS) as pool:
-        futures = {
+        pending = {
             pool.submit(_fetch_evening_session, target_date, s["secid"]): s
             for s in selected
         }
-        for fut in as_completed(futures):
-            s = futures[fut]
+        for fut in as_completed(pending):
+            s = pending[fut]
             evening_high, evening_low = fut.result()
             results.append({
                 "ticker": s["secid"],
@@ -303,8 +529,11 @@ def scan_atr(atr_threshold, date=None):
             })
 
     results.sort(key=lambda r: r["atr_points"], reverse=True)
-    return {
+    result = {
         "date": target_date,
         "threshold": atr_threshold,
         "results": results,
     }
+    if fut_block is not None:
+        result["futures"] = fut_block
+    return result

@@ -697,8 +697,11 @@ def scan_atr_route():
         body = request.json or {}
         threshold = body.get("atr_threshold", 0)
         date = body.get("date") or None
-        result = scan_atr(threshold, date)
-        if "error" in result:
+        # Фьючерсы приходят из вочлиста: у акций скан идёт по всей борде,
+        # а контрактов на FORTS сотни, и нужны только свои.
+        futures = body.get("futures") or []
+        result = scan_atr(threshold, date, futures)
+        if "error" in result and "futures" not in result:
             return jsonify(result), 400
         return jsonify(result)
     except Exception as e:

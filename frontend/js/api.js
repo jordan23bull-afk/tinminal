@@ -68,7 +68,8 @@ export const api = {
     request("POST", "/api/history", { source: "tinkoff", symbol, timeframe, limit }, { signal }),
   lookup: (symbol) => request("GET", `/api/lookup?symbol=${encodeURIComponent(symbol)}`),
   prices: (symbols) => request("GET", `/api/prices?symbols=${symbols.join(",")}`),
-  scanAtr: (threshold, date) => request("POST", "/api/scan/atr", { atr_threshold: threshold, date }),
+  scanAtr: (threshold, date, futures) =>
+    request("POST", "/api/scan/atr", { atr_threshold: threshold, date, futures }),
   lastTradingDay: () => request("GET", "/api/scan/last-trading-day"),
 
   // Настройки — плоский словарь «ключ → строка»: в них лежит всё,
