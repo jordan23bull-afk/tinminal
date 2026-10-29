@@ -353,7 +353,11 @@ def _h_object_delete(payload, record):
                    "object_id": current["id"],
                    "alerts": attached,
                }}
-    return inverse, events, {"deleted": current["id"]}
+    # Удалённые алерты возвращаем в ответе: сервер не рассылает события
+    # обратно отправителю, и без этого они остались бы у него в store до
+    # перезагрузки — кнопка «удалить линию» не убрала бы алерт.
+    return inverse, events, {"deleted": current["id"],
+                             "removed_alerts": attached}
 
 
 AUTO_LEVEL_KIND = "auto_level"

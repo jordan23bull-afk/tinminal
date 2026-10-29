@@ -9,6 +9,7 @@
 
 import { pixelToPrice, eventToLocal, magnetPrice } from "../coords.js";
 import { hasHLineAt } from "../hittest.js";
+import { loadLineStyle } from "../line-style.js";
 
 export const hlineTool = {
   name: "horizontal",
@@ -39,13 +40,19 @@ export const hlineTool = {
     // иначе на одном цене накапливаются неотличимые линии.
     if (hasHLineAt(hlines, price, priceTolerance)) return;
 
-    await send({
+    const result = await send({
       kind: "hline",
       symbol: chartObj.config.symbol,
       timeframe: chartObj.config.timeframe,
       chart_index: ctx.chartIndex,
       data: { price },
-      style: { color: "#2196F3", lineWidth: 1, lineStyle: 2 }
+      // Цвет, толщина и тип — те же, что выбрали у предыдущей линии.
+      style: loadLineStyle()
     });
+
+    // Панель настройки открывается сразу у новой линии — как у источника.
+    // Объект приходит в ответе на команду; если ответа нет, обойдёмся без
+    // панели: линия уже нарисована синхронизацией из store.
+    ctx.onObjectCreated?.(result?.data?.object, event);
   }
 };

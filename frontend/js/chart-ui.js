@@ -6,9 +6,44 @@ import { getTool } from "./drawings/tools/registry.js";
 import { eventToLocal } from "./drawings/coords.js";
 import { hitHLine, hitLevel } from "./drawings/hittest.js";
 import { levelsWithout } from "./drawings/levels.js";
+import { saveLineStyle } from "./drawings/line-style.js";
 import { CHART_SETTINGS_DEFAULTS } from "./constants.js";
 
 
+
+// Палитра линии: 50 готовых цветов (серые, яркие, пастельные, тёмные),
+// как у источника, плюс плитка «+» с системным выбором цвета.
+const LINE_PALETTE = [
+  "#FFFFFF", "#D1D4DC", "#B2B5BE", "#8B8E94", "#5D606B",
+  "#363A45", "#1E222D", "#131722", "#08090D", "#000000",
+  "#F23645", "#FF9800", "#FFD600", "#089982", "#00BCD4",
+  "#2962FF", "#7B1FA2", "#E91E63", "#795548", "#607D8B",
+  "#FFCDD2", "#FFE0B2", "#FFF9C4", "#C8E6C9", "#B2EBF2",
+  "#BBDEFB", "#D1C4E9", "#F0F4C3", "#FFCCBC", "#CFD8DC",
+  "#E57373", "#FFB74D", "#FFF176", "#81C784", "#4DD0E1",
+  "#64B5F6", "#9575CD", "#F06292", "#A1887F", "#90A4AE",
+  "#B71C1C", "#E65100", "#F9A825", "#1B5E20", "#006064",
+  "#0D47A1", "#4A148C", "#880E4F", "#3E2723", "#263238",
+];
+
+const LINE_WIDTHS = [1, 2, 3, 4];
+
+// 0 — сплошная, 2 — штрихи, 1 — точки: те три варианта, что у источника.
+const LINE_STYLES = [
+  { value: 0, label: "Линия" },
+  { value: 2, label: "Штриховой пунктир" },
+  { value: 1, label: "Точечный пунктир" },
+];
+
+const ALERT_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+  <circle cx="7" cy="7" r="5.1" fill="none" stroke="currentColor" stroke-width="1.2"/>
+  <path d="M7 4.3V7l2 1.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+  <path d="M11.6 11.4h3.2M13.2 9.8v3.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+</svg>`;
+
+const TRASH_ICON = `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+  <path d="M2.4 4.1h11.2M6 4.1V2.4h4v1.7M3.9 4.1l.7 9.5h6.8l.7-9.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+</svg>`;
 
 const TIMEFRAMES = [
   { tf: "1m", label: "1m" },
@@ -28,6 +63,14 @@ export class ChartUI {
     this._ctxMenu = null;
     this._ctxData = null;
     this._initContextMenu();
+
+    // Плавающая панель настройки линии: живёт рядом с линией, а не
+    // по центру экрана. Пока открыта, следует за координатой линии.
+    this._linePanel = null;
+    this._linePanelState = null;
+    this._linePanelRaf = 0;
+    this._initLinePanelGlobal();
+    this._initLinePanelStore();
   }
 
   _initContextMenu() {
@@ -47,8 +90,10 @@ export class ChartUI {
     }
     const price = object?.data?.price;
     if (price == null) return;
-    const tol = this.m._priceTol(chartObj);
-    const existing = this.m.alerts.find(a => a.chartId === chartId && Math.abs(a.price - price) < tol);
+    // Алерт ищем по символу и цене: у серверного алерта поля chartId нет,
+    // и прежняя проверка всегда отвечала «алерта нет».
+    const symbol = object.symbol || chartObj?.config?.symbol;
+    const existing = this.m._findServerAlert(symbol, price, this.m._symbolTol(symbol));
     let html = "";
     html += `<div class="hline-ctx-item" data-action="edit-line">Изменить</div>`;
     if (!existing) {
@@ -63,12 +108,12 @@ export class ChartUI {
     this._ctxMenu.style.top = e.clientY + "px";
     this._ctxMenu.classList.remove("hidden");
     this._ctxMenu.querySelectorAll(".hline-ctx-item").forEach(item => {
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (ev) => {
         const action = item.dataset.action;
         if (action === "add-alert") this.m.addAlert(chartId, price);
-        else if (action === "remove-alert") this.m.removeAlert(chartId, price);
+        else if (action === "remove-alert") this.m.removeAlert(chartId, price, object.id);
         else if (action === "remove-line") this.m.sendDrawingCommand({ kind: "object.delete", id: object.id });
-        else if (action === "edit-line") this._editLine(chartId, object);
+        else if (action === "edit-line") this._editLine(chartId, object, ev);
         this._ctxMenu.classList.add("hidden");
       });
     });
@@ -103,66 +148,507 @@ export class ChartUI {
     });
   }
 
-  _editLine(chartId, object) {
-    const price = object?.data?.price;
-    if (price == null) return;
-    const style = object.style || {};
-    this.showLineSettingsDialog(chartId, price, (newOpts) => {
-      // Правка стиля — тоже команда: иначе сервер не узнает
-      // про новый вид линии.
-      this.m.sendDrawingCommand({
-        kind: "object.update",
-        id: object.id,
-        style: { color: newOpts.color, lineWidth: newOpts.lineWidth, lineStyle: newOpts.lineStyle }
-      });
-    }, style);
+  _editLine(chartId, object, anchorEvent = null) {
+    this.showLineSettingsPanel(chartId, object, anchorEvent);
   }
 
-  showLineSettingsDialog(chartId, price, onApply, currentOpts = {}) {
-    const s = currentOpts;
-    const overlay = document.createElement("div");
-    overlay.className = "ind-modal-overlay";
-    const modal = document.createElement("div");
-    modal.className = "ind-modal";
-    modal.innerHTML = `
-      <h3>Настройки линии</h3>
-      <label>Цвет</label>
-      <div style="display:flex;align-items:center;gap:6px">
-        <input type="color" id="ls-color" value="${s.color || '#2196F3'}" style="width:40px;height:26px;border:none;background:none;cursor:pointer">
-        <span id="ls-color-val" style="font-size:11px;color:var(--text-secondary)">${s.color || '#2196F3'}</span>
-      </div>
-      <label>Толщина</label>
-      <input type="number" id="ls-width" min="1" max="4" value="${s.lineWidth || 1}">
-      <label>Стиль</label>
-      <select id="ls-style">
-        <option value="0" ${s.lineStyle === 0 ? 'selected' : ''}>Сплошная</option>
-        <option value="1" ${s.lineStyle === 1 ? 'selected' : ''}>Точки</option>
-        <option value="2" ${s.lineStyle === 2 || s.lineStyle == null ? 'selected' : ''}>Штрихи</option>
-        <option value="3" ${s.lineStyle === 3 ? 'selected' : ''}>Штрих-пунктир</option>
-      </select>
-      <div class="ind-modal-btns">
-        <button class="ind-cancel">Отмена</button>
-        <button class="ind-save">Применить</button>
-      </div>
-    `;
-    overlay.appendChild(modal);
-    document.body.appendChild(overlay);
+  /**
+   * Плавающий тулбар настройки линии — как у источника.
+   *
+   * Панель живёт у самой линии и едет за ней при зуме и панораме. Кнопки:
+   * цвет, толщина, стиль, алерт, удаление. Выбор применяется сразу одной
+   * командой object.update; предпросмотра и кнопки «Применить» нет — откат
+   * живёт в обычной истории вкладки (Ctrl+Z). Выбранный вид запоминается и
+   * достаётся следующей линии.
+   */
+  showLineSettingsPanel(chartId, object, anchorEvent = null) {
+    const chartObj = this.m.charts.get(chartId);
+    const price = object?.data?.price;
+    if (!chartObj?.mainSeries || !object?.id || price == null) return;
 
-    modal.querySelector("#ls-color").addEventListener("input", function() {
-      modal.querySelector("#ls-color-val").textContent = this.value;
+    // Панель уже открыта на этой линии: второй экземпляр не нужен.
+    if (this._linePanelState?.objectId === object.id) return;
+    this.closeLinePanel();
+
+    const style = object.style || {};
+    const initial = {
+      color: style.color || "#2196F3",
+      lineWidth: style.lineWidth ?? 1,
+      lineStyle: style.lineStyle ?? 2,
+    };
+
+    const panel = document.createElement("div");
+    panel.className = "line-panel";
+    panel.setAttribute("role", "toolbar");
+    panel.setAttribute("aria-label", "Настройки линии");
+
+    const state = {
+      chartId,
+      objectId: object.id,
+      symbol: object.symbol || chartObj.config.symbol,
+      price,
+      style: initial,
+      popup: null,
+      popupEl: null,
+      buttons: {},
+      anchorX: anchorEvent ? anchorEvent.clientX : null,
+      // Кэш последней геометрии: слежение идёт каждый кадр, лишние
+      // записи в стили вызывали бы пересчёт раскладки без нужды.
+      visibility: null,
+      top: null,
+      left: null,
+    };
+
+    const addButton = (name, title, html, onClick) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "line-panel-btn";
+      btn.dataset.act = name;
+      btn.title = title;
+      btn.innerHTML = html;
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      });
+      panel.appendChild(btn);
+      state.buttons[name] = btn;
+      return btn;
+    };
+
+    addButton("color", "Цвет", this._lineColorIcon(initial.color),
+      () => this._toggleLinePopup("color"));
+    addButton("width", "Толщина", this._lineWidthIcon(initial.lineWidth),
+      () => this._toggleLinePopup("width"));
+    addButton("style", "Стиль линии", this._lineStyleIcon(initial.lineStyle),
+      () => this._toggleLinePopup("style"));
+    addButton("alert", "Поставить алерт", ALERT_ICON,
+      () => this._toggleLineAlert());
+    addButton("delete", "Удалить линию", TRASH_ICON,
+      () => this._deleteLine());
+
+    const popupEl = document.createElement("div");
+    popupEl.className = "line-panel-popup hidden";
+    panel.appendChild(popupEl);
+    state.popupEl = popupEl;
+
+    this._linePanel = panel;
+    this._linePanelState = state;
+    document.body.appendChild(panel);
+
+    this._refreshLinePanelButtons();
+    this._positionLinePanel();
+    this._startLinePanelFollow();
+  }
+
+  /** Шестиугольник с текущим цветом: кнопка показывает выбранный цвет. */
+  _lineColorIcon(color) {
+    return `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <path d="M8 1.6 13.4 4.6v6.8L8 14.4 2.6 11.4V4.6z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+      <circle cx="8" cy="8" r="2.6" fill="${color}"/>
+    </svg>`;
+  }
+
+  _lineWidthIcon(width) {
+    const w = Math.max(1, Math.min(4, Number(width) || 1));
+    return `<span class="line-panel-dash" style="height:${w}px"></span>` +
+      `<span>${w}px</span>` +
+      `<span class="line-panel-dash" style="height:${w}px"></span>`;
+  }
+
+  _lineStyleIcon(lineStyle) {
+    const dash = lineStyle === 1
+      ? ' stroke-dasharray="1.5 2.5" stroke-linecap="round"'
+      : lineStyle === 2
+        ? ' stroke-dasharray="4 3"'
+        : lineStyle === 3
+          ? ' stroke-dasharray="5 3 1.5 3"'
+          : "";
+    return `<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+      <line x1="1.5" y1="8" x2="14.5" y2="8" stroke="currentColor" stroke-width="1.6"${dash}/>
+    </svg>`;
+  }
+
+  _lineOptionSample(lineStyle) {
+    const cls = lineStyle === 1 ? " dotted" : lineStyle === 2 ? " dashed" : "";
+    return `<span class="line-option-sample${cls}"></span>`;
+  }
+
+  /** Открыть/закрыть всплывающую таблицу под тулбаром. */
+  _toggleLinePopup(kind) {
+    const state = this._linePanelState;
+    if (!state) return;
+    if (state.popup === kind) {
+      this._closeLinePopup();
+      return;
+    }
+    state.popup = kind;
+    state.popupAnchor = state.buttons[kind] || null;
+    this._renderLinePopup();
+    this._refreshLinePanelButtons();
+    this._positionLinePopup();
+  }
+
+  _closeLinePopup() {
+    const state = this._linePanelState;
+    if (!state) return;
+    state.popup = null;
+    if (state.popupEl) {
+      state.popupEl.classList.add("hidden");
+      state.popupEl.innerHTML = "";
+    }
+    this._refreshLinePanelButtons();
+  }
+
+  _renderLinePopup() {
+    const state = this._linePanelState;
+    if (!state?.popupEl || !state.popup) return;
+    const popup = state.popupEl;
+    popup.innerHTML = "";
+    popup.classList.remove("hidden");
+
+    if (state.popup === "color") {
+      const grid = document.createElement("div");
+      grid.className = "line-palette";
+      const current = (state.style.color || "").toLowerCase();
+      for (const color of LINE_PALETTE) {
+        const swatch = document.createElement("button");
+        swatch.type = "button";
+        swatch.className = "line-swatch";
+        swatch.dataset.color = color;
+        swatch.style.background = color;
+        swatch.title = color;
+        if (color.toLowerCase() === current) swatch.classList.add("active");
+        swatch.addEventListener("click", () => this._applyLineStyleChange({ color }));
+        grid.appendChild(swatch);
+      }
+      // Свой цвет: открывает системную палитру.
+      const custom = document.createElement("label");
+      custom.className = "line-swatch line-swatch-custom";
+      custom.title = "Другой цвет";
+      custom.textContent = "+";
+      const input = document.createElement("input");
+      input.type = "color";
+      input.value = state.style.color;
+      input.addEventListener("input", () => this._applyLineStyleChange({ color: input.value }));
+      custom.appendChild(input);
+      grid.appendChild(custom);
+      popup.appendChild(grid);
+      return;
+    }
+
+    const list = document.createElement("div");
+    list.className = "line-options";
+    if (state.popup === "width") {
+      for (const width of LINE_WIDTHS) {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "line-option";
+        row.dataset.width = String(width);
+        if (width === state.style.lineWidth) row.classList.add("active");
+        row.innerHTML = `<span class="line-option-mark" style="height:${width}px"></span>` +
+          `<span>${width}px</span>`;
+        row.addEventListener("click", () => {
+          this._applyLineStyleChange({ lineWidth: width });
+          this._closeLinePopup();
+        });
+        list.appendChild(row);
+      }
+      popup.appendChild(list);
+      return;
+    }
+
+    for (const option of LINE_STYLES) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "line-option";
+      row.dataset.style = String(option.value);
+      if (option.value === state.style.lineStyle) row.classList.add("active");
+      row.innerHTML = `${this._lineOptionSample(option.value)}<span>${option.label}</span>`;
+      row.addEventListener("click", () => {
+        this._applyLineStyleChange({ lineStyle: option.value });
+        this._closeLinePopup();
+      });
+      list.appendChild(row);
+    }
+    popup.appendChild(list);
+  }
+
+  /** Подсветка выбранного в уже открытой таблице — без перерисовки. */
+  _refreshLinePopup() {
+    const state = this._linePanelState;
+    if (!state?.popupEl || !state.popup) return;
+    if (state.popup === "color") {
+      const current = (state.style.color || "").toLowerCase();
+      state.popupEl.querySelectorAll(".line-swatch[data-color]").forEach((swatch) => {
+        swatch.classList.toggle("active", swatch.dataset.color.toLowerCase() === current);
+      });
+      const input = state.popupEl.querySelector("input[type=color]");
+      if (input && document.activeElement !== input) input.value = state.style.color;
+    }
+  }
+
+  /** Кнопки показывают текущий вид линии и состояние алерта. */
+  _refreshLinePanelButtons() {
+    const state = this._linePanelState;
+    if (!state) return;
+    const buttons = state.buttons;
+    if (buttons.color) {
+      buttons.color.innerHTML = this._lineColorIcon(state.style.color);
+      buttons.color.classList.toggle("open", state.popup === "color");
+    }
+    if (buttons.width) {
+      buttons.width.innerHTML = this._lineWidthIcon(state.style.lineWidth);
+      buttons.width.classList.toggle("open", state.popup === "width");
+    }
+    if (buttons.style) {
+      buttons.style.innerHTML = this._lineStyleIcon(state.style.lineStyle);
+      buttons.style.classList.toggle("open", state.popup === "style");
+    }
+    if (buttons.alert) {
+      const alert = this._lineAlertFor(state);
+      buttons.alert.classList.toggle("active", !!alert);
+      buttons.alert.title = alert ? "Убрать алерт" : "Поставить алерт";
+    }
+  }
+
+  /** Алерт этой линии: сначала по объекту, потом по символу и цене. */
+  _lineAlertFor(state) {
+    const list = Array.from(store.alerts?.values?.() || []);
+    const own = list.find((a) => a.object_id === state.objectId);
+    if (own) return own;
+    const tol = this.m._symbolTol(state.symbol);
+    return list.find(
+      (a) => a.symbol === state.symbol && a.price != null &&
+        Math.abs(a.price - state.price) <= tol
+    ) || null;
+  }
+
+  /**
+   * Применить выбранный вид: одна команда, один шаг отмены.
+   *
+   * Стиль меняется на сервере, а не только на графике: иначе он не пережил
+   * бы перезагрузку и разошёлся бы с линией после следующей синхронизации.
+   */
+  _applyLineStyleChange(patch) {
+    const state = this._linePanelState;
+    if (!state) return;
+    const obj = store.objects.get(state.objectId);
+    // Неизвестные ключи стиля сохраняем: сервер заменяет style целиком.
+    const next = { ...(obj?.style || state.style), ...patch };
+    state.style = {
+      color: next.color || "#2196F3",
+      lineWidth: next.lineWidth ?? 1,
+      lineStyle: next.lineStyle ?? 2,
+    };
+    // Настройка линии запоминается: следующая линия рисуется такой же.
+    saveLineStyle(state.style);
+    this._refreshLinePanelButtons();
+    this._refreshLinePopup();
+    this._positionLinePopup();
+    this.m.sendDrawingCommand({ kind: "object.update", id: state.objectId, style: next });
+  }
+
+  _toggleLineAlert() {
+    const state = this._linePanelState;
+    if (!state) return;
+    this._closeLinePopup();
+    const alert = this._lineAlertFor(state);
+    if (alert) this.m.removeAlert(state.chartId, state.price, state.objectId);
+    else this.m.addAlert(state.chartId, state.price);
+  }
+
+  _deleteLine() {
+    const state = this._linePanelState;
+    if (!state) return;
+    const id = state.objectId;
+    this.closeLinePanel();
+    // Алерт сервер удаляет вместе с объектом и возвращает в ответе:
+    // без этого он остался бы в store вкладки до перезагрузки.
+    this.m.sendDrawingCommand({ kind: "object.delete", id });
+  }
+
+  /**
+   * Поставить тулбар у линии: по Y — над линией (или под ней, если сверху
+   * места нет), по X — на точку клика, с прижатием к краям окна.
+   */
+  _positionLinePanel() {
+    const state = this._linePanelState;
+    const panel = this._linePanel;
+    if (!state || !panel) return;
+
+    const chartObj = this.m.charts.get(state.chartId);
+    if (!chartObj?.mainSeries || !document.body.contains(chartObj.body)) {
+      this.closeLinePanel();
+      return;
+    }
+    // Панель живёт только пока линия нарисована: смена символа или
+    // раскладки уносит линию с панели, и настройка теряет смысл.
+    const line = (chartObj._horizontalLines || []).find(
+      (l) => l._objectId === state.objectId
+    );
+    if (!line) {
+      this.closeLinePanel();
+      return;
+    }
+
+    const rect = chartObj.body.getBoundingClientRect();
+    const y = chartObj.mainSeries.priceToCoordinate(state.price);
+    // Линия ушла из видимой области: панель прячется, но не закрывается —
+    // вернули масштаб, и она снова встанет на своё место.
+    if (y == null || Number.isNaN(y) || y < 0 || y > rect.height) {
+      if (state.visibility !== "hidden") {
+        panel.style.visibility = "hidden";
+        state.visibility = "hidden";
+      }
+      return;
+    }
+
+    // Тулбар меряем без поповера: тот позиционирован абсолютно и на
+    // высоту панели не влияет.
+    const box = panel.getBoundingClientRect();
+    const lineY = rect.top + y;
+    const gap = 10;
+    let top = lineY - box.height - gap;
+    if (top < 8) top = lineY + gap;
+    const maxTop = Math.max(8, window.innerHeight - box.height - 8);
+    const clampedTop = Math.min(Math.max(top, 8), maxTop);
+
+    const left = state.anchorX != null
+      ? state.anchorX - box.width / 2
+      : rect.left + rect.width / 2 - box.width / 2;
+    const maxLeft = Math.max(8, window.innerWidth - box.width - 8);
+    const clampedLeft = Math.min(Math.max(left, 8), maxLeft);
+
+    // Цикл слежения идёт каждый кадр, а меняются координаты далеко не
+    // всегда: без сравнения мы бы дёргали раскладку 60 раз в секунду.
+    if (state.visibility !== "visible") {
+      panel.style.visibility = "visible";
+      state.visibility = "visible";
+    }
+    const roundedTop = Math.round(clampedTop);
+    const roundedLeft = Math.round(clampedLeft);
+    if (state.top !== roundedTop) {
+      panel.style.top = `${roundedTop}px`;
+      state.top = roundedTop;
+    }
+    if (state.left !== roundedLeft) {
+      panel.style.left = `${roundedLeft}px`;
+      state.left = roundedLeft;
+    }
+  }
+
+  /**
+   * Поповер открывается под тулбаром; если снизу нет места — над ним,
+   * а по горизонтали сдвигается, чтобы не выйти за окно.
+   */
+  _positionLinePopup() {
+    const state = this._linePanelState;
+    const panel = this._linePanel;
+    const popup = state?.popupEl;
+    if (!state || !panel || !popup || !state.popup) return;
+
+    // Таблица встаёт левым краем по своей кнопке: так видно, какая настройка
+    // открыта, и палитра не уезжает от тулбара на узких окнах.
+    popup.style.left = `${state.popupAnchor?.offsetLeft ?? 0}px`;
+    popup.style.transform = "none";
+    popup.classList.remove("above");
+
+    const box = popup.getBoundingClientRect();
+    const panelBox = panel.getBoundingClientRect();
+    if (box.bottom > window.innerHeight - 8 && panelBox.top - box.height - 6 > 8) {
+      popup.classList.add("above");
+    }
+
+    const shifted = popup.getBoundingClientRect();
+    let shift = 0;
+    if (shifted.left < 8) shift = 8 - shifted.left;
+    else if (shifted.right > window.innerWidth - 8) shift = window.innerWidth - 8 - shifted.right;
+    if (shift) popup.style.transform = `translateX(${shift}px)`;
+    // Размер окна запоминаем: при ресайзе поповер надо прижать заново.
+    state.popupWin = `${window.innerWidth}x${window.innerHeight}`;
+  }
+
+  /** Пока панель открыта, её Y пересчитывается каждый кадр: так она едет
+   *  за линией при зуме, панораме, автоскейле и ресайзе панели графика. */
+  _startLinePanelFollow() {
+    if (this._linePanelRaf) return;
+    const tick = () => {
+      if (!this._linePanel) {
+        this._linePanelRaf = 0;
+        return;
+      }
+      this._positionLinePanel();
+      if (!this._linePanel) {
+        this._linePanelRaf = 0;
+        return;
+      }
+      // Поповер стоит внутри тулбара и едет вместе с ним; пересчитывать его
+      // каждый кадр незачем — только когда изменился размер окна.
+      const state = this._linePanelState;
+      if (state?.popup && state.popupWin !== `${window.innerWidth}x${window.innerHeight}`) {
+        this._positionLinePopup();
+      }
+      this._linePanelRaf = requestAnimationFrame(tick);
+    };
+    this._linePanelRaf = requestAnimationFrame(tick);
+  }
+
+  closeLinePanel() {
+    if (this._linePanel) this._linePanel.remove();
+    if (this._linePanelRaf) cancelAnimationFrame(this._linePanelRaf);
+    this._linePanel = null;
+    this._linePanelState = null;
+    this._linePanelRaf = 0;
+  }
+
+  _initLinePanelGlobal() {
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || !this._linePanel) return;
+      e.preventDefault();
+      this.closeLinePanel();
     });
 
-    modal.querySelector(".ind-cancel").addEventListener("click", () => overlay.remove());
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    document.addEventListener("pointerdown", (e) => {
+      if (!this._linePanel) return;
+      if (e.target instanceof Element && e.target.closest(".line-panel")) return;
+      this.closeLinePanel();
+    }, true);
+  }
 
-    modal.querySelector(".ind-save").addEventListener("click", () => {
-      const opts = {
-        color: modal.querySelector("#ls-color").value,
-        lineWidth: Number(modal.querySelector("#ls-width").value) || 1,
-        lineStyle: Number(modal.querySelector("#ls-style").value),
-      };
-      overlay.remove();
-      onApply(opts);
+  /** Панель показывает то, что лежит в store: источник истины — сервер. */
+  _syncLinePanelState() {
+    const state = this._linePanelState;
+    if (!state) return;
+    const obj = store.objects.get(state.objectId);
+    if (!obj) {
+      this.closeLinePanel();
+      return;
+    }
+    const style = obj.style || {};
+    state.style = {
+      color: style.color || "#2196F3",
+      lineWidth: style.lineWidth ?? 1,
+      lineStyle: style.lineStyle ?? 2,
+    };
+    if (obj.data?.price != null) state.price = obj.data.price;
+    this._refreshLinePanelButtons();
+    this._refreshLinePopup();
+  }
+
+  _initLinePanelStore() {
+    // Своя команда тоже приходит этим событием: панель просто показывает
+    // новый вид. Отмена и повтор обновляют её так же — черновика больше нет,
+    // спорить с историей нечему.
+    store.on("objects", () => {
+      if (!this._linePanelState) return;
+      this._syncLinePanelState();
+      this._positionLinePanel();
+    });
+
+    store.on("alerts", () => {
+      if (!this._linePanelState) return;
+      this._refreshLinePanelButtons();
     });
   }
 
@@ -656,6 +1142,9 @@ export class ChartUI {
           const point = eventToLocal(chartObj, event);
           return point ? hitLevel(chartObj, levels, point) : null;
         },
+        // Инструмент вернул созданный сервером объект: панель настройки
+        // открывается сразу, как у источника после отрисовки.
+        onObjectCreated: (obj, ev) => this.showLineSettingsPanel(chartIdLocal, obj, ev),
         send: (payload) => this.m.sendDrawingCommand(payload)
       };
     };
@@ -686,11 +1175,39 @@ export class ChartUI {
       tool.onPointerUp(toolContext(e, id));
     };
 
+    // Клик по готовой линии открывает тулбар настройки, как у источника.
+    // Работает только с курсором: при рисовании и ластике нажатие занято
+    // инструментом, и панель открылась бы вместо действия.
+    let lineDown = null;
+    const onLinePointerDown = (e) => {
+      lineDown = e.button === 0 && this.m._activeTool === "crosshair"
+        ? { x: e.clientX, y: e.clientY }
+        : null;
+    };
+    const onLinePointerUp = (e) => {
+      const down = lineDown;
+      lineDown = null;
+      if (!down || e.button !== 0) return;
+      // Протаскивание графика панель не открывает: только чистый клик.
+      if (Math.abs(e.clientX - down.x) > 5 || Math.abs(e.clientY - down.y) > 5) return;
+      const point = eventToLocal(chartObj, e);
+      if (!point) return;
+      const hlines = Array.from(store.objects?.values() || []).filter(
+        (o) => o.kind === "hline" && o.symbol === chartObj.config.symbol
+      );
+      const hit = hitHLine(chartObj, hlines, point);
+      if (hit) this.showLineSettingsPanel(id, hit.object, e);
+    };
+    body.addEventListener("pointerdown", onLinePointerDown, true);
+    body.addEventListener("pointerup", onLinePointerUp, true);
+
     body.addEventListener("pointerdown", onToolPointerDown, true);
     body.addEventListener("pointermove", onToolPointerMove, true);
     body.addEventListener("pointerup", onToolPointerUp, true);
 
     chartObj._boundListeners = [
+      { target: body, handler: onLinePointerDown, capture: true },
+      { target: body, handler: onLinePointerUp, capture: true },
       { target: body, handler: onToolPointerDown, capture: true },
       { target: body, handler: onToolPointerMove, capture: true },
       { target: body, handler: onToolPointerUp, capture: true },

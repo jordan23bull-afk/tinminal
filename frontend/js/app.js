@@ -1676,13 +1676,16 @@ function deleteServerAlert(alertId) {
  * Стиль линии по состоянию алерта на этом уровне:
  * есть алерт — сплошная, сработал — штрихи, алерта нет — обычный вид.
  */
-function alertLineStyle(symbol, price) {
+function alertLineStyle(symbol, price, fallback = 2) {
   const tol = chartManager._symbolTol(symbol);
   const list = Array.from(store.alerts.values());
   const alert = list.find(
     (a) => a.symbol === symbol && a.price != null && Math.abs(a.price - price) <= tol
   );
-  return alert ? (alert.status === "fired" ? 2 : 0) : 2;
+  // Алерта нет — действует собственный стиль линии: иначе выбор стиля в
+  // панели настройки ни на что бы не влиял, а все линии всегда были бы
+  // штриховыми, даже если объект создан сплошным.
+  return alert ? (alert.status === "fired" ? 2 : 0) : fallback;
 }
 
 function syncAlertsFromStore() {
@@ -1699,7 +1702,10 @@ function syncAlertsFromStore() {
       if (!line._objectId && !line._autoLevel) continue;
       const price = line.options().price;
       if (price == null) continue;
-      const wantStyle = alertLineStyle(symbol, price);
+      // Без алерта линия возвращается к стилю своего объекта, а не к
+      // штрихам: стиль задаёт панель настройки, а не отсутствие алерта.
+      const obj = line._objectId ? store.objects.get(line._objectId) : null;
+      const wantStyle = alertLineStyle(symbol, price, obj?.style?.lineStyle ?? 2);
       if (line.options().lineStyle === wantStyle) continue;
       // Вид меняем на месте: пересоздание линии рвало её метки и оставляло
       // на графике вторую линию того же уровня.
@@ -1809,7 +1815,7 @@ function syncDrawingsFromStore() {
       // алерта на этом уровне. Сравнивать и создавать нужно по нему:
       // иначе каждая общая перерисовка возвращала бы вооружённую линию
       // к штрихам серверного объекта.
-      const style = { ...base, lineStyle: alertLineStyle(obj.symbol, price) };
+      const style = { ...base, lineStyle: alertLineStyle(obj.symbol, price, base.lineStyle ?? 2) };
       const color = style.color || "#2196F3";
       const lineWidth = style.lineWidth ?? 1;
       const lineStyle = style.lineStyle ?? 2;

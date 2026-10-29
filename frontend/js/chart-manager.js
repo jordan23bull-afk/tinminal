@@ -236,17 +236,26 @@ export class ChartManager {
     return alert;
   }
 
-  /** Удалить алерт по цене на графике. */
-  removeAlert(chartId, price) {
+  /**
+   * Удалить алерт по цене на графике.
+   *
+   * objectId точнее цены: алерт держится за объект линии, и на одном
+   * уровне могли побывать разные алерты.
+   */
+  removeAlert(chartId, price, objectId = null) {
     const sourceObj = this.charts.get(chartId);
     const symbol = sourceObj ? sourceObj.config.symbol : null;
     const tol = this._priceTol(sourceObj);
-    const matched = this._findServerAlert(symbol, price, tol);
+    const fromObject = objectId
+      ? (this.alerts || []).find((a) => a.object_id === objectId)
+      : null;
+    const matched = fromObject || this._findServerAlert(symbol, price, tol);
     if (matched) {
       if (this._deleteAlert) this._deleteAlert(matched.id);
       else log("Удаление алерта недоступно: нет подключения к серверу");
     }
-    this._updateLineColor(chartId, price, null, null, 2);
+    // Вид линии не задаём: без алерта действует стиль самого объекта, и
+    // его применит syncAlertsFromStore по событию store.
   }
 
   /** Алерт на этом символе и цене, если он есть. */
