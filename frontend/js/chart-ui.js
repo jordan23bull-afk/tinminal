@@ -5,7 +5,6 @@ import { store } from "./store.js";
 import { getTool } from "./drawings/tools/registry.js";
 import { eventToLocal } from "./drawings/coords.js";
 import { hitHLine, hitLevel } from "./drawings/hittest.js";
-import { levelsWithout } from "./drawings/levels.js";
 import { saveLineStyle } from "./drawings/line-style.js";
 import { CHART_SETTINGS_DEFAULTS } from "./constants.js";
 
@@ -60,9 +59,6 @@ const TIMEFRAMES = [
 export class ChartUI {
   constructor(manager) {
     this.m = manager;
-    this._ctxMenu = null;
-    this._ctxData = null;
-    this._initContextMenu();
 
     // Плавающая панель настройки линии: живёт рядом с линией, а не
     // по центру экрана. Пока открыта, следует за координатой линии.
@@ -71,85 +67,6 @@ export class ChartUI {
     this._linePanelRaf = 0;
     this._initLinePanelGlobal();
     this._initLinePanelStore();
-  }
-
-  _initContextMenu() {
-    this._ctxMenu = document.createElement("div");
-    this._ctxMenu.className = "hline-ctx hidden";
-    document.body.appendChild(this._ctxMenu);
-    document.addEventListener("click", () => this._ctxMenu.classList.add("hidden"));
-  }
-
-  showContextMenu(e, chartId, object, target) {
-    const chartObj = this.m.charts.get(chartId);
-    // Уровень автоуровня: своя цена в поле данных, набор инструментов
-    // для линии не подходит.
-    if (object?.kind === "auto_level") {
-      this._showLevelContextMenu(e, chartId, object, target);
-      return;
-    }
-    const price = object?.data?.price;
-    if (price == null) return;
-    // Алерт ищем по символу и цене: у серверного алерта поля chartId нет,
-    // и прежняя проверка всегда отвечала «алерта нет».
-    const symbol = object.symbol || chartObj?.config?.symbol;
-    const existing = this.m._findServerAlert(symbol, price, this.m._symbolTol(symbol));
-    let html = "";
-    html += `<div class="hline-ctx-item" data-action="edit-line">Изменить</div>`;
-    if (!existing) {
-      html += `<div class="hline-ctx-item" data-action="add-alert">Добавить алерт</div>`;
-    } else {
-      html += `<div class="hline-ctx-item" data-action="remove-alert">Удалить алерт</div>`;
-    }
-    html += `<div class="hline-ctx-item hline-ctx-danger" data-action="remove-line">Удалить линию</div>`;
-    this._ctxMenu.innerHTML = html;
-    this._ctxData = { chartId, object, price };
-    this._ctxMenu.style.left = e.clientX + "px";
-    this._ctxMenu.style.top = e.clientY + "px";
-    this._ctxMenu.classList.remove("hidden");
-    this._ctxMenu.querySelectorAll(".hline-ctx-item").forEach(item => {
-      item.addEventListener("click", (ev) => {
-        const action = item.dataset.action;
-        if (action === "add-alert") this.m.addAlert(chartId, price);
-        else if (action === "remove-alert") this.m.removeAlert(chartId, price, object.id);
-        else if (action === "remove-line") this.m.sendDrawingCommand({ kind: "object.delete", id: object.id });
-        else if (action === "edit-line") this._editLine(chartId, object, ev);
-        this._ctxMenu.classList.add("hidden");
-      });
-    });
-  }
-
-  /**
-   * Меню уровня автоуровня: у него своя цена в поле данных, а набор
-   * действий для линии не подходит.
-   */
-  _showLevelContextMenu(e, chartId, object, target) {
-    const field = target?.field;
-    if (!field) return;
-    let html = "";
-    html += `<div class="hline-ctx-item" data-action="remove-level">Удалить уровень</div>`;
-    this._ctxMenu.innerHTML = html;
-    this._ctxData = { chartId, object, field };
-    this._ctxMenu.style.left = e.clientX + "px";
-    this._ctxMenu.style.top = e.clientY + "px";
-    this._ctxMenu.classList.remove("hidden");
-    this._ctxMenu.querySelectorAll(".hline-ctx-item").forEach(item => {
-      item.addEventListener("click", () => {
-        if (item.dataset.action === "remove-level") {
-          this.m.sendDrawingCommand({
-            kind: "object.set_auto_levels",
-            symbol: object.symbol,
-            timeframe: object.timeframe,
-            levels: levelsWithout(object, field),
-          });
-        }
-        this._ctxMenu.classList.add("hidden");
-      });
-    });
-  }
-
-  _editLine(chartId, object, anchorEvent = null) {
-    this.showLineSettingsPanel(chartId, object, anchorEvent);
   }
 
   /**
@@ -406,22 +323,15 @@ export class ChartUI {
       buttons.style.classList.toggle("open", state.popup === "style");
     }
     if (buttons.alert) {
-      const alert = this._lineAlertFor(state);
-      buttons.alert.classList.toggle("active", !!alert);
-      buttons.alert.title = alert ? "Убрать алерт" : "Поставить алерт";
+      const alert = this.m.findLineAlert(state.objectId, state.symbol, state.price);
+      // Светится только вооружённый алерт: сработавший и истёкший — уже
+      // не «поставлен», и кнопка обязана погаснуть.
+      const armed = alert?.status === "armed";
+      buttons.alert.classList.toggle("active", armed);
+      buttons.alert.title = armed
+        ? "Убрать алерт"
+        : alert ? "Поставить алерт снова" : "Поставить алерт";
     }
-  }
-
-  /** Алерт этой линии: сначала по объекту, потом по символу и цене. */
-  _lineAlertFor(state) {
-    const list = Array.from(store.alerts?.values?.() || []);
-    const own = list.find((a) => a.object_id === state.objectId);
-    if (own) return own;
-    const tol = this.m._symbolTol(state.symbol);
-    return list.find(
-      (a) => a.symbol === state.symbol && a.price != null &&
-        Math.abs(a.price - state.price) <= tol
-    ) || null;
   }
 
   /**
@@ -453,9 +363,13 @@ export class ChartUI {
     const state = this._linePanelState;
     if (!state) return;
     this._closeLinePopup();
-    const alert = this._lineAlertFor(state);
-    if (alert) this.m.removeAlert(state.chartId, state.price, state.objectId);
-    else this.m.addAlert(state.chartId, state.price);
+    // Вся развилка «снять / перевзвести / поставить» живёт в одном месте:
+    // chart-manager.toggleAlert. Кнопка только передаёт линию.
+    this.m.toggleAlert(state.chartId, {
+      id: state.objectId,
+      symbol: state.symbol,
+      data: { price: state.price },
+    });
   }
 
   _deleteLine() {
@@ -1063,6 +977,14 @@ export class ChartUI {
     });
   }
 
+  /** Объекты раскладки нужного вида на символе этого графика. */
+  _objectsFor(chartObj, kind) {
+    const symbol = chartObj?.config?.symbol;
+    return Array.from(store.objects?.values?.() || []).filter(
+      (o) => o.kind === kind && o.symbol === symbol
+    );
+  }
+
   bindChartInteractions(id, body, chartObj) {
     const tooltip = document.createElement("div");
     tooltip.className = "candle-tooltip hidden";
@@ -1113,18 +1035,10 @@ export class ChartUI {
 
     const toolContext = (event, chartIdLocal) => {
       const idx = this.m.getAllChartIds().indexOf(chartIdLocal);
-      const hlines = store.objects
-        ? Array.from(store.objects.values()).filter(
-            (o) => o.kind === "hline" && o.symbol === chartObj.config.symbol
-          )
-        : [];
+      const hlines = this._objectsFor(chartObj, "hline");
       // Автоуровни сканера: цена каждого лежит в своём поле данных,
       // поэтому инструментам нужен отдельный список.
-      const levels = store.objects
-        ? Array.from(store.objects.values()).filter(
-            (o) => o.kind === "auto_level" && o.symbol === chartObj.config.symbol
-          )
-        : [];
+      const levels = this._objectsFor(chartObj, "auto_level");
       return {
         chartObj,
         chartId: chartIdLocal,
@@ -1132,7 +1046,7 @@ export class ChartUI {
         event,
         hlines,
         levels,
-        priceTolerance: this.m._priceTol(chartObj),
+        tick: this.m._tick(chartObj),
         magnetOn: !!this.m._magnetOn,
         hitHLine: () => {
           const point = eventToLocal(chartObj, event);
@@ -1192,10 +1106,7 @@ export class ChartUI {
       if (Math.abs(e.clientX - down.x) > 5 || Math.abs(e.clientY - down.y) > 5) return;
       const point = eventToLocal(chartObj, e);
       if (!point) return;
-      const hlines = Array.from(store.objects?.values() || []).filter(
-        (o) => o.kind === "hline" && o.symbol === chartObj.config.symbol
-      );
-      const hit = hitHLine(chartObj, hlines, point);
+      const hit = hitHLine(chartObj, this._objectsFor(chartObj, "hline"), point);
       if (hit) this.showLineSettingsPanel(id, hit.object, e);
     };
     body.addEventListener("pointerdown", onLinePointerDown, true);
@@ -1205,29 +1116,21 @@ export class ChartUI {
     body.addEventListener("pointermove", onToolPointerMove, true);
     body.addEventListener("pointerup", onToolPointerUp, true);
 
-    chartObj._boundListeners = [
-      { target: body, handler: onLinePointerDown, capture: true },
-      { target: body, handler: onLinePointerUp, capture: true },
-      { target: body, handler: onToolPointerDown, capture: true },
-      { target: body, handler: onToolPointerMove, capture: true },
-      { target: body, handler: onToolPointerUp, capture: true },
-      { target: body, handler: onTooltipMove, capture: false },
-    ];
+    // Правый клик по графику больше ничего не открывает: единственный вход
+    // в настройку линии — левый клик. preventDefault оставлен, чтобы на
+    // холсте не всплывало браузерное меню.
+    const onContextMenu = (e) => e.preventDefault();
+    body.addEventListener("contextmenu", onContextMenu);
 
-    body.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      const point = eventToLocal(chartObj, e);
-      const hlines = Array.from(store.objects?.values() || []).filter(
-        (o) => o.kind === "hline" && o.symbol === chartObj.config.symbol
-      );
-      const levels = Array.from(store.objects?.values() || []).filter(
-        (o) => o.kind === "auto_level" && o.symbol === chartObj.config.symbol
-      );
-      const target = point ? (hitHLine(chartObj, hlines, point) || hitLevel(chartObj, levels, point)) : null;
-      if (target) {
-        this.showContextMenu(e, id, target.object, target);
-      }
-    });
+    chartObj._boundListeners = [
+      { target: body, type: "pointerdown", handler: onLinePointerDown, capture: true },
+      { target: body, type: "pointerup", handler: onLinePointerUp, capture: true },
+      { target: body, type: "pointerdown", handler: onToolPointerDown, capture: true },
+      { target: body, type: "pointermove", handler: onToolPointerMove, capture: true },
+      { target: body, type: "pointerup", handler: onToolPointerUp, capture: true },
+      { target: body, type: "mousemove", handler: onTooltipMove, capture: false },
+      { target: body, type: "contextmenu", handler: onContextMenu, capture: false },
+    ];
 
     const gearBtn = document.createElement("button");
     gearBtn.className = "chart-settings-btn";
@@ -1243,8 +1146,10 @@ export class ChartUI {
 
   unbindChartInteractions(chartObj) {
     if (!chartObj._boundListeners) return;
-    for (const { target, handler, capture } of chartObj._boundListeners) {
-      target.removeEventListener("mousedown", handler, capture);
+    // Снимаем ровно те типы событий, на которые вешали: раньше здесь стоял
+    // mousedown, и после смены сетки или удаления панели слушатели оставались.
+    for (const { target, type, handler, capture } of chartObj._boundListeners) {
+      target.removeEventListener(type, handler, capture);
     }
     chartObj._boundListeners = null;
   }

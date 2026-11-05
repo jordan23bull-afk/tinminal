@@ -6,6 +6,7 @@
 // на расстояние — иначе ластик, выбор и перетаскивание расходятся между собой.
 
 import { levelEntries } from "./levels.js";
+import { sameStep } from "../prices.js";
 
 /** Порог захвата в пикселях. Общий для всех инструментов. */
 export const HIT_TOLERANCE = 10;
@@ -46,13 +47,13 @@ function priceToPixelSafe(series, price) {
 }
 
 /**
- * Есть ли линия рядом с ценой. Нужно, чтобы не плодить дубли
- * на одном уровне: сравнение идёт с допуском по шагу цены.
+ * Есть ли линия на том же шаге цены. Нужно, чтобы не плодить дубли
+ * на одном уровне: сравниваются номера шагов, а не расстояние.
  */
-export function hasHLineAt(objects, price, tolerance) {
+export function hasHLineAt(objects, price, tick) {
   if (price == null || !Array.isArray(objects)) return false;
   return objects.some(
-    (o) => o.kind === "hline" && o.data?.price != null && Math.abs(o.data.price - price) <= tolerance
+    (o) => o.kind === "hline" && o.data?.price != null && sameStep(o.data.price, price, tick)
   );
 }
 

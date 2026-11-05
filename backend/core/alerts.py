@@ -18,7 +18,7 @@ import logging
 import threading
 import time
 
-from . import store
+from . import prices, store
 
 logger = logging.getLogger("dash.alerts")
 
@@ -83,16 +83,17 @@ def expire_stale():
     return expired
 
 
-def matches_price(alert, price, tolerance=0.0):
-    """Сработал ли алерт на цене отдельной сделки.
+def matches_price(alert, price, tick=0.0):
+    """Стоят ли сделка и уровень на одном шаге цены.
 
-    Уровень ставится магнитом по цене свечи, но в базу попадает пересчитанным
-    из пикселя, поэтому сравниваем с допуском в половину шага инструмента.
+    Допуска в половину шага больше нет: уровни лежат на шаге (серверный
+    инвариант), поэтому достаточно сравнить номера шагов. Шаг неизвестен —
+    сравниваем по копейке, как `prices.snap`.
     """
     level = _f(alert.get("price"))
     if level is None or price is None:
         return False
-    return abs(price - level) <= max(0.0, tolerance)
+    return prices.step_index(price, tick) == prices.step_index(level, tick)
 
 
 def after_arming(alert, ts):
@@ -112,11 +113,12 @@ def evaluate_trades(symbol, trades, tick=0.0):
     """Проверить алерты по потоку сделок.
 
     trades — список пар (время в секундах, цена) в порядке поступления.
-    Возвращает сработавшие алерты с ценой сделки, на которой сработали.
+    tick — шаг цены инструмента: по нему решается, попала ли сделка на
+    уровень. Возвращает сработавшие алерты с ценой сделки, на которой
+    сработали.
     """
     symbol = str(symbol or "").upper()
     expire_stale()
-    tolerance = float(tick or 0.0) / 2.0
 
     armed = store.list_armed_alerts(symbol)
     if not armed or not trades:
@@ -132,15 +134,21 @@ def evaluate_trades(symbol, trades, tick=0.0):
                 continue
             if not after_arming(alert, ts):
                 continue
-            if not matches_price(alert, price, tolerance):
+            if not matches_price(alert, price, tick):
                 continue
 
-            store.mark_alert_fired(alert["id"])
+            # Пока шла проверка, алерт мог сработать в другом потоке
+            # (сделка и свеча идут параллельно). Тогда mark вернул None,
+            # и второй раз рассылать нечего.
+            updated = store.mark_alert_fired(alert["id"])
+            if updated is None:
+                continue
             # repeat_mode='always' — алерт возвращается в бой после срабатывания.
             if (alert.get("repeat_mode") or "once") == "always":
                 store.update_alert(alert["id"], status="armed")
+                updated = store.get_alert(alert["id"]) or updated
 
-            current = dict(store.get_alert(alert["id"]) or alert)
+            current = dict(updated)
             current["trade"] = {"price": price, "time": ts}
             fired.append(current)
 
@@ -167,10 +175,13 @@ def evaluate_candle(symbol, timeframe, candle):
             continue
 
         updated = store.mark_alert_fired(alert["id"])
+        # Алерт уже сработал в потоке сделок — второй раз не рассылаем.
+        if updated is None:
+            continue
         # repeat_mode='always' — алерт возвращается в бой после срабатывания.
         if (alert.get("repeat_mode") or "once") == "always":
             store.update_alert(alert["id"], status="armed")
-            updated = store.get_alert(alert["id"])
+            updated = store.get_alert(alert["id"]) or updated
         if updated:
             updated = dict(updated)
             updated["candle"] = {"close": candle.get("close"), "time": candle.get("time")}

@@ -10,6 +10,7 @@ import { api } from "./api.js";
 import { store } from "./store.js";
 import { attachSocket, attachLayout, bindServerEvents, waitForSocket, getMismatchReason, commands } from "./commands.js";
 import { getTool } from "./drawings/tools/registry.js";
+import { sameStep } from "./prices.js";
 
 let selectedTimeframe = "1h";
 let isLoading = false;
@@ -1503,6 +1504,7 @@ function bindDrawings() {
   chartManager.onDrawingsChanged = syncAllDrawings;
   chartManager._createAlert = createServerAlert;
   chartManager._deleteAlert = deleteServerAlert;
+  chartManager._rearmAlert = rearmServerAlert;
   chartManager._setAutoLevels = setAutoLevels;
   if (drawingsBound) return;
   drawingsBound = true;
@@ -1638,11 +1640,11 @@ async function migrateLegacyAutoLevels() {
  */
 function findLineObject(symbol, price) {
   if (!symbol || price == null) return null;
-  const tol = chartManager._symbolTol(symbol);
+  const tick = chartManager._symbolTick(symbol);
   for (const obj of store.objects.values()) {
     if (obj.kind !== "hline" || obj.symbol !== symbol) continue;
     const p = obj.data?.price;
-    if (p == null || Math.abs(p - price) > tol) continue;
+    if (p == null || !sameStep(p, price, tick)) continue;
     return obj;
   }
   return null;
@@ -1672,20 +1674,28 @@ function deleteServerAlert(alertId) {
   return commands.alertDelete(alertId);
 }
 
+function rearmServerAlert(alertId) {
+  if (!store.layoutId) return null;
+  return commands.alertRearm(alertId);
+}
+
 /**
  * Стиль линии по состоянию алерта на этом уровне:
  * есть алерт — сплошная, сработал — штрихи, алерта нет — обычный вид.
  */
 function alertLineStyle(symbol, price, fallback = 2) {
-  const tol = chartManager._symbolTol(symbol);
-  const list = Array.from(store.alerts.values());
-  const alert = list.find(
-    (a) => a.symbol === symbol && a.price != null && Math.abs(a.price - price) <= tol
+  const tick = chartManager._symbolTick(symbol);
+  const matches = Array.from(store.alerts.values()).filter(
+    (a) => a.symbol === symbol && a.price != null && sameStep(a.price, price, tick)
   );
+  // Вооружённый алерт главнее старой записи на том же шаге: линия должна
+  // показывать действующее состояние, а не историю.
+  const alert = matches.find((a) => a.status === "armed") || matches[0];
   // Алерта нет — действует собственный стиль линии: иначе выбор стиля в
   // панели настройки ни на что бы не влиял, а все линии всегда были бы
   // штриховыми, даже если объект создан сплошным.
-  return alert ? (alert.status === "fired" ? 2 : 0) : fallback;
+  // Сплошная только у вооружённого: сработавший и истёкший дают штрихи.
+  return alert ? (alert.status === "armed" ? 0 : 2) : fallback;
 }
 
 function syncAlertsFromStore() {
@@ -1720,21 +1730,79 @@ function syncAlertsFromStore() {
   }
 }
 
-/** Сработавший алерт: уведомление и звук. */
-function onAlertFired(data) {
-  const alert = data?.alert;
-  if (!alert) return;
-  store.putAlert(alert);
+// --- Уведомления о сработавших алертах ---------------------------------
+//
+// Событие alert_fired приходит в комнату раскладки, то есть каждой вкладке,
+// открытой на этой раскладке. Уведомление и звук — одно на браузер: иначе
+// при двух вкладках пользователь видит и слышит срабатывание дважды.
+// Право показать разыгрывается блокировкой Web Locks (общая для вкладок
+// одного origin), повторное событие с тем же id/fired_at отсекается в памяти.
+const ALERT_NOTIFY_SEEN_MS = 30000;
+// Блокировку держим столько же, сколько помним событие в памяти: дубль может
+// прийти не сразу (переподключение сокета), а отпущенная блокировка позволила
+// бы второй вкладке показать то же самое ещё раз.
+const ALERT_NOTIFY_LOCK_HOLD_MS = ALERT_NOTIFY_SEEN_MS;
+const alertNotifySeen = new Map();
+
+function alertNotifyKey(alert) {
+  // fired_at отличает повторное срабатывание repeat_mode='always'.
+  return `${alert.id}-${alert.fired_at ?? ""}`;
+}
+
+function alertNotifySeenRecently(key) {
+  const now = Date.now();
+  for (const [k, ts] of alertNotifySeen) {
+    if (now - ts > ALERT_NOTIFY_SEEN_MS) alertNotifySeen.delete(k);
+  }
+  if (alertNotifySeen.has(key)) return true;
+  alertNotifySeen.set(key, now);
+  return false;
+}
+
+/** Показать уведомление и проиграть звук — ровно один раз на браузер. */
+async function showAlertFeedbackOnce(alert, key) {
+  if (!navigator.locks?.request) {
+    showAlertFeedback(alert);
+    return;
+  }
+  let owned = false;
+  try {
+    await navigator.locks.request(`dash-notify:${key}`, { ifAvailable: true }, async (lock) => {
+      if (!lock) return;
+      owned = true;
+      showAlertFeedback(alert);
+      // Держим блокировку, пока вторая вкладка не попробует её взять:
+      // без этого она успела бы показать то же самое после освобождения.
+      await new Promise((resolve) => setTimeout(resolve, ALERT_NOTIFY_LOCK_HOLD_MS));
+    });
+  } catch (err) {
+    // Web Locks недоступен — ведём себя как раньше, но карточку всё равно
+    // заменяет tag, а не копит вторую.
+    if (!owned) showAlertFeedback(alert);
+  }
+}
+
+function showAlertFeedback(alert) {
   const channels = Array.isArray(alert.channels) ? alert.channels : [];
   const title = `${alert.symbol} @ ${alert.price}`;
-  const close = alert.candle?.close;
+  const close = alert.candle?.close ?? alert.trade?.price;
 
   if (channels.includes("browser") && "Notification" in window && Notification.permission === "granted") {
     try {
-      const n = new Notification(title, { body: `Цена: ${close ?? "—"}` });
+      const n = new Notification(title, {
+        body: `Цена: ${close ?? "—"}`,
+        // Тег свой у каждого срабатывания, а не у алерта: с общим тегом
+        // повторное срабатывание молча заменяло старую карточку в центре
+        // уведомлений Windows — без баннера. Дубли и так отсекает блокировка
+        // в showAlertFeedbackOnce, тегу эту работу делать не нужно.
+        tag: `dash-alert-${alert.id}-${alert.fired_at ?? alert.fired_count ?? ""}`,
+      });
       n.onclick = () => {
         n.close();
-        const url = `${location.origin}${location.pathname}?symbol=${alert.symbol}`;
+        // Раскладка из алерта, а не текущая: уведомление могла показать
+        // вкладка, открытая на другой раскладке.
+        const layout = alert.layout_id || store.layoutId || "";
+        const url = `${location.origin}/chart/${layout}/?symbol=${alert.symbol}`;
         window.open(url, "_blank");
       };
     } catch (e) {}
@@ -1751,8 +1819,24 @@ function onAlertFired(data) {
       log("Звук алерта недоступен:", e);
     }
   }
-  log(`Алерт сработал: ${title}`);
 }
+
+/** Сработавший алерт: уведомление и звук. */
+function onAlertFired(data) {
+  const alert = data?.alert;
+  if (!alert?.id) return;
+  store.putAlert(alert);
+  const key = alertNotifyKey(alert);
+  // Строка в консоли — для диагностики: видно, пришло событие дважды или
+  // уведомление показано дважды.
+  log(`Алерт сработал: ${alert.symbol} @ ${alert.price} (id ${alert.id}, fired_at ${alert.fired_at ?? "—"})`);
+  if (alertNotifySeenRecently(key)) {
+    log(`Повторное событие алерта ${alert.id} — уведомление не дублируем`);
+    return;
+  }
+  showAlertFeedbackOnce(alert, key);
+}
+
 
 /**
  * Одноразовый перенос алертов из localStorage на сервер.

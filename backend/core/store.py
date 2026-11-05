@@ -417,8 +417,11 @@ def list_armed_alerts(symbol=None):
 
 
 def update_alert(alert_id, **fields):
+    # fired_at, fired_count и created_at разрешены ради перевзвода: команда
+    # alert.rearm сбрасывает их, а обратная операция возвращает прежние.
     allowed = ("symbol", "timeframe", "condition", "price", "price_high",
-               "expires_at", "channels", "repeat_mode", "status", "object_id")
+               "expires_at", "channels", "repeat_mode", "status", "object_id",
+               "fired_at", "fired_count", "created_at")
     sets, values = [], []
     for key, value in fields.items():
         if key not in allowed:
@@ -442,12 +445,23 @@ def delete_alert(alert_id):
 
 
 def mark_alert_fired(alert_id):
+    """Перевести алерт в fired, если он ещё вооружён.
+
+    Условие в UPDATE, а не в питоне: сделки и свечи проверяются в разных
+    потоках, и оба могли прочитать status='armed' до записи. Тогда алерт
+    срабатывал дважды — два уведомления и fired_count=2. Строка, которую
+    уже перевели в fired, вторым вызовом не обновляется, и функция
+    возвращает None: рассылать нечего.
+    """
     conn = _conn()
-    conn.execute(
-        "UPDATE alerts SET status=?, fired_at=?, fired_count=fired_count+1 WHERE id=?",
+    cur = conn.execute(
+        "UPDATE alerts SET status=?, fired_at=?, fired_count=fired_count+1 "
+        "WHERE id=? AND status='armed'",
         ("fired", now(), alert_id),
     )
     conn.commit()
+    if cur.rowcount == 0:
+        return None
     return get_alert(alert_id)
 
 

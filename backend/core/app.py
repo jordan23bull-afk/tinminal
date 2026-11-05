@@ -17,6 +17,7 @@ from core.database import init_db, prune_candles
 from core.tls import ensure_bundle
 from core.times import TF_SECONDS, floor_ts
 from core import commands, migrations, store, alerts
+from core.prices import tick_for as tick_for_symbol
 from core.config import (
     BACKEND_DIR as CONFIG_BACKEND_DIR,
     DATA_DIR,
@@ -745,14 +746,10 @@ _alert_trade_handlers = {}
 
 
 def _alert_tick(symbol):
-    """Допуск для сравнения цены с уровнем — половина шага инструмента."""
-    source = _alert_trade_sources.get(symbol)
-    if source is None:
-        return 0.0
-    try:
-        return float(source.get_tick(symbol) or 0.0)
-    except Exception:
-        return 0.0
+    """Шаг цены инструмента для сравнения сделки с уровнем."""
+    # Не `prices.tick_for`: в этом модуле имя `prices` занято HTTP-обработчиком
+    # /api/prices, и обращение к модулю молча уходило бы в функцию.
+    return tick_for_symbol(symbol)
 
 
 def _on_alert_trade(symbol, trade):

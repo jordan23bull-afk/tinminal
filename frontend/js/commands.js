@@ -177,6 +177,7 @@ export const commands = {
 
   alertCreate: (payload) => request("alert.create", payload),
   alertUpdate: (id, patch) => request("alert.update", { id, ...patch }),
+  alertRearm: (id) => request("alert.rearm", { id }),
   alertDelete: (id) => request("alert.delete", { id }),
 
   setSymbol: (layoutId, chartIndex, symbol) =>

@@ -2,6 +2,8 @@ import { log } from "./utils.js";
 import { calcIndicator, loadCustomIndicators } from "./indicators.js";
 import { ChartUI } from "./chart-ui.js";
 import { TF_SECONDS, floorTs, HEAVY_INDICATOR_TYPES, POC_PRESET_TYPES, CHART_SETTINGS_KEY, CHART_SETTINGS_DEFAULTS } from "./constants.js";
+import { sameStep, DEFAULT_TICK } from "./prices.js";
+import { store } from "./store.js";
 
 function mskFullTime(time) {
   if (typeof time === "object" && time.year !== undefined) {
@@ -173,18 +175,18 @@ export class ChartManager {
     catch { return {}; }
   }
 
-  // матчинг уровней/алертов: полтинка тика инструмента, cap 0.5 (старое поведение
-  // для дорогого тикера), при неизвестном тике — 0.01 (низкоценовые бумаги не сливаются)
-  _priceTol(chartObj) {
-    const tick = chartObj && chartObj.config.tick > 0 ? chartObj.config.tick : 0.01;
-    return Math.min(0.5, tick / 2);
+  // Шаг цены инструмента: им проверяются дубли линий и совпадение цены
+  // с уровнем. Полутика больше нет — сравнение идёт по номеру шага.
+  _tick(chartObj) {
+    const tick = chartObj && chartObj.config.tick;
+    return tick > 0 ? tick : DEFAULT_TICK;
   }
 
-  _symbolTol(symbol) {
+  _symbolTick(symbol) {
     for (const [, c] of this.charts) {
-      if (c.config.symbol === symbol) return this._priceTol(c);
+      if (c.config.symbol === symbol) return this._tick(c);
     }
-    return this._priceTol(null);
+    return this._tick(null);
   }
 
   /**
@@ -245,11 +247,7 @@ export class ChartManager {
   removeAlert(chartId, price, objectId = null) {
     const sourceObj = this.charts.get(chartId);
     const symbol = sourceObj ? sourceObj.config.symbol : null;
-    const tol = this._priceTol(sourceObj);
-    const fromObject = objectId
-      ? (this.alerts || []).find((a) => a.object_id === objectId)
-      : null;
-    const matched = fromObject || this._findServerAlert(symbol, price, tol);
+    const matched = this.findLineAlert(objectId, symbol, price);
     if (matched) {
       if (this._deleteAlert) this._deleteAlert(matched.id);
       else log("Удаление алерта недоступно: нет подключения к серверу");
@@ -258,12 +256,62 @@ export class ChartManager {
     // его применит syncAlertsFromStore по событию store.
   }
 
-  /** Алерт на этом символе и цене, если он есть. */
-  _findServerAlert(symbol, price, tol) {
-    const list = this.alerts || [];
-    return list.find(
-      (a) => (!symbol || a.symbol === symbol) && a.price != null && Math.abs(a.price - price) <= tol
-    ) || null;
+  /**
+   * Алерт этой линии — единственное место такого поиска.
+   *
+   * Сначала по object_id (алерт держится за объект), потом по символу и
+   * номеру шага. Вооружённый главнее старой записи на том же шаге.
+   */
+  findLineAlert(objectId, symbol, price) {
+    // Источник — store, а не this.alerts: кэш обновляется своим подписчиком
+    // и на момент события «alerts» может быть ещё старым.
+    const list = Array.from(store.alerts?.values?.() || []);
+    if (objectId) {
+      const own = list.filter((a) => a.object_id === objectId);
+      const ownArmed = own.find((a) => a.status === "armed");
+      if (ownArmed) return ownArmed;
+      if (own.length) return own[0];
+    }
+    if (price == null) return null;
+    const tick = this._symbolTick(symbol);
+    const matches = list.filter(
+      (a) => (!symbol || a.symbol === symbol) && a.price != null && sameStep(a.price, price, tick)
+    );
+    return matches.find((a) => a.status === "armed") || matches[0] || null;
+  }
+
+  /**
+   * Кнопка алерта: снять, перевзвести или поставить.
+   *
+   * Правило одно на все входы (тулбар линии и любые будущие): у
+   * вооружённого — снять, у сработавшего или истёкшего — перевзвести,
+   * иначе поставить заново.
+   */
+  toggleAlert(chartId, object) {
+    const price = object?.data?.price;
+    if (price == null) return null;
+    const sourceObj = this.charts.get(chartId);
+    const symbol = object?.symbol || sourceObj?.config?.symbol;
+    const alert = this.findLineAlert(object?.id, symbol, price);
+    if (!alert) return this.addAlert(chartId, price);
+    if (alert.status === "armed") return this.removeAlert(chartId, price, object?.id);
+    return this.rearmAlert(alert.id);
+  }
+
+  /**
+   * Перевзвести сработавший или истёкший алерт.
+   *
+   * Тот же id и та же цена, сервер сбрасывает fired_at и счётчик: клик по
+   * погасшей кнопке тулбара ставит алерт заново одной командой, а не парой
+   * «удалить + создать».
+   */
+  rearmAlert(alertId) {
+    if (!alertId) return null;
+    if (!this._rearmAlert) {
+      log("Перевзвод алерта недоступен: нет подключения к серверу");
+      return null;
+    }
+    return this._rearmAlert(alertId);
   }
 
   _updateLineColor(chartId, price, color, lineWidth, lineStyle) {
@@ -292,55 +340,15 @@ export class ChartManager {
   }
 
   _findLineByPrice(chartObj, price) {
-    const tol = this._priceTol(chartObj);
+    const tick = this._tick(chartObj);
     return chartObj._horizontalLines.find(l => {
       const p = l.options().price;
-      return p != null && Math.abs(p - price) < tol;
+      return p != null && sameStep(p, price, tick);
     }) || null;
   }
 
-  /**
-   * Проверка алертов убрана с клиента: условие проверяет сервер на каждой
-   * свече, иначе без открытой вкладки алерты молчат, а в двух вкладках
-   * одно срабатывание приходит дважды.
-   */
-  checkAlerts() {}
-
-  _sendNotification(alert, candle) {
-    const title = `${alert.symbol} — ${alert.price}`;
-    const body = `Цена: ${candle.close}`;
-    if ("Notification" in window && Notification.permission === "granted") {
-      const n = new Notification(title, { body, requireInteraction: false });
-      n.onclick = () => {
-        n.close();
-        window.open(this._alertUrl(alert), "_blank");
-      };
-    }
-    try {
-      const audio = new Audio("sounds/alert.wav");
-      audio.volume = 0.5;
-      const played = audio.play();
-      if (played && played.catch) {
-        played.catch((err) => log("Звук алерта не проигрался:", err && err.name));
-      }
-    } catch (e) {
-      log("Звук алерта недоступен:", e);
-    }
-    log(`Alert: ${title}`);
-  }
-
-  _alertUrl(alert) {
-    let timeframe = "";
-    for (const [id, chartObj] of this.charts) {
-      if (chartObj.config.symbol === alert.symbol) {
-        timeframe = chartObj.config.timeframe || "";
-        break;
-      }
-    }
-    const params = new URLSearchParams({ symbol: alert.symbol });
-    if (timeframe) params.set("timeframe", timeframe);
-    return `${location.origin}${location.pathname}?${params.toString()}`;
-  }
+  // Проверку алертов и уведомления держит только сервер и app.js → onAlertFired:
+  // второй путь на клиенте давал двойные уведомления в двух вкладках.
 
   _updateChartConfig(id, updates) {
     const chartObj = this.charts.get(id);
@@ -901,8 +909,6 @@ export class ChartManager {
       return;
     }
 
-    this.checkAlerts(candle, { symbol: chartObj.config.symbol });
-
     if (chartObj.sessionLine) chartObj.sessionLine.addTimeIfNewSession(candle.time);
 
     if (chartObj.config._lastCandles) {
@@ -1083,10 +1089,10 @@ export class ChartManager {
     const ownerSymbol = opts.ownerSymbol || symbol;
     for (const [id, chartObj] of this.charts) {
       if (chartObj.config.symbol !== symbol || !chartObj.mainSeries) continue;
-      const tol = this._priceTol(chartObj);
+      const tick = this._tick(chartObj);
       const exists = chartObj._horizontalLines.some(l => {
         const p = l.options().price;
-        return p != null && Math.abs(p - price) < tol;
+        return p != null && sameStep(p, price, tick);
       });
       if (exists) continue;
       const line = chartObj.mainSeries.createPriceLine({
@@ -1121,7 +1127,7 @@ export class ChartManager {
       const o = line.options();
       if (o.price == null) continue;
       const price = o.price;
-      if (saved.some(s => Math.abs(s.price - price) < this._priceTol(chartObj))) continue;
+      if (saved.some(s => sameStep(s.price, price, this._tick(chartObj)))) continue;
       saved.push({ price, color: o.color, lineWidth: o.lineWidth, lineStyle: o.lineStyle });
     }
   }

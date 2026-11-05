@@ -13,6 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from core import store
 from core import alerts as alerts_module
+from core import prices
 
 logger = logging.getLogger(__name__)
 
@@ -298,13 +299,17 @@ def _h_object_create(payload, record):
     # (redo) создал бы объект с другим id, и ссылка на старую потерялась бы.
     object_id = payload.get("object_id") or store.new_id()
     payload["object_id"] = object_id
+    kind = payload.get("kind") or "hline"
+    payload["data"] = _snap_object_price(
+        kind, payload.get("symbol"), payload.get("data") or {}
+    )
     obj = store.create_object(
         layout_id,
-        payload.get("kind") or "hline",
+        kind,
         payload.get("symbol"),
         payload.get("timeframe"),
         int(payload.get("chart_index", 0)),
-        payload.get("data") or {},
+        payload["data"],
         payload.get("style") or {},
         object_id=object_id,
     )
@@ -396,7 +401,10 @@ def _h_object_set_auto_levels(payload, record):
     if not _ensure_layout(layout_id) or not symbol:
         return None, [], {}
 
-    levels = {k: _as_float(payload.get(k))
+    # Уровень обязан лежать на шаге цены: между шагами сделок не бывает,
+    # и уровень «около» цены заставлял бы сравнивать сделки с допуском.
+    tick = prices.tick_for(symbol)
+    levels = {k: prices.snap(_as_float(payload.get(k)), tick)
               for k in ("day_high", "day_low", "eve_high", "eve_low")}
     existing = _find_auto_level(layout_id, symbol)
     events = []
@@ -473,6 +481,24 @@ def _as_float(value):
         return None
 
 
+def _snap_object_price(kind, symbol, data):
+    """Прижать цену ручной линии к шагу инструмента.
+
+    Цена приходит из пикселя и кратна шагу лишь случайно, а сделок между
+    шагами не бывает. Правим payload, а не только объект: иначе повтор
+    команды (redo) вернул бы исходную пиксельную цену.
+    """
+    if kind != "hline" or not isinstance(data, dict):
+        return data
+    price = _as_float(data.get("price"))
+    if price is None:
+        return data
+    snapped = prices.snap(price, prices.tick_for(symbol))
+    if snapped is not None:
+        data["price"] = snapped
+    return data
+
+
 def _h_object_clear_symbol(payload, record):
     layout_id = payload.get("layout_id")
     symbol = payload.get("symbol")
@@ -512,10 +538,13 @@ def _h_object_create_many(payload, record):
     layout_id = payload.get("layout_id")
     created = []
     for spec in payload.get("objects") or []:
+        spec["data"] = _snap_object_price(
+            spec.get("kind", "hline"), spec.get("symbol"), spec.get("data") or {}
+        )
         created.append(store.create_object(
             layout_id, spec.get("kind", "hline"), spec.get("symbol"),
             spec.get("timeframe"), int(spec.get("chart_index", 0)),
-            spec.get("data") or {}, spec.get("style") or {},
+            spec["data"], spec.get("style") or {},
             object_id=spec.get("object_id"),
         ))
     events = [("object_added", {"object": o}) for o in created]
@@ -583,14 +612,54 @@ def _h_alert_update(payload, record):
     current = store.get_alert(payload.get("id"))
     if not current:
         return None, [], {}
+    # fired_at, fired_count и created_at нужны обратной операции перевзвода:
+    # без них отмена не вернула бы сработавшее состояние.
     fields = {k: v for k, v in payload.items()
               if k in ("symbol", "timeframe", "condition", "price", "price_high",
-                       "expires_at", "channels", "repeat_mode", "status", "object_id")}
+                       "expires_at", "channels", "repeat_mode", "status", "object_id",
+                       "fired_at", "fired_count", "created_at")}
     updated = store.update_alert(current["id"], **fields)
     inverse = {"kind": "alert.update", "payload": dict(
         {"id": current["id"]},
         **{k: current.get(k) for k in fields}
     )}
+    return inverse, [("alert_updated", {"alert": updated})], {"alert": updated}
+
+
+ALERT_TTL_SECONDS = 7 * 24 * 3600
+
+
+def _h_alert_rearm(payload, record):
+    """Снова вооружить сработавший или истёкший алерт.
+
+    Тулбар линии светит кнопку алерта только у вооружённого: сработавший
+    гаснет, а клик по погасшей кнопке ставит алерт заново. Отдельная
+    команда нужна, чтобы перевзвод был одним шагом отмены, а не парой
+    «удалить + создать» с потерей истории срабатывания.
+
+    created_at сдвигается на серверное «сейчас»: иначе проверка
+    `after_arming` пропустила бы сделки, случившиеся до перевзвода.
+    """
+    current = store.get_alert(payload.get("id"))
+    if not current:
+        return None, [], {}
+    now = store.now()
+    updated = store.update_alert(
+        current["id"],
+        status="armed",
+        fired_at=None,
+        fired_count=0,
+        created_at=now,
+        expires_at=now + ALERT_TTL_SECONDS,
+    )
+    inverse = {"kind": "alert.update", "payload": {
+        "id": current["id"],
+        "status": current.get("status"),
+        "fired_at": current.get("fired_at"),
+        "fired_count": current.get("fired_count"),
+        "created_at": current.get("created_at"),
+        "expires_at": current.get("expires_at"),
+    }}
     return inverse, [("alert_updated", {"alert": updated})], {"alert": updated}
 
 
@@ -718,6 +787,7 @@ HANDLERS = {
     "object.set_auto_levels": _h_object_set_auto_levels,
     "alert.create": _h_alert_create,
     "alert.update": _h_alert_update,
+    "alert.rearm": _h_alert_rearm,
     "alert.delete": _h_alert_delete,
     "chart.set_symbol": _chart_setter("symbol", "symbol", "chart.set_symbol"),
     "chart.set_timeframe": _chart_setter("timeframe", "timeframe", "chart.set_timeframe"),

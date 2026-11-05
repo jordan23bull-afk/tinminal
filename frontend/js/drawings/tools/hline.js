@@ -10,6 +10,7 @@
 import { pixelToPrice, eventToLocal, magnetPrice } from "../coords.js";
 import { hasHLineAt } from "../hittest.js";
 import { loadLineStyle } from "../line-style.js";
+import { snapToTick } from "../../prices.js";
 
 export const hlineTool = {
   name: "horizontal",
@@ -25,7 +26,7 @@ export const hlineTool = {
   },
 
   async onPointerDown(ctx) {
-    const { chartObj, event, hlines, priceTolerance, send } = ctx;
+    const { chartObj, event, hlines, tick, send } = ctx;
     if (event.button !== 0) return;
 
     const point = eventToLocal(chartObj, event);
@@ -35,10 +36,15 @@ export const hlineTool = {
     if (price == null) return;
 
     if (ctx.magnetOn) price = magnetPrice(chartObj, price);
+    // Цена из пикселя не кратна шагу, а сделок между шагами не бывает.
+    // Прижимаем до проверки дублей: иначе линия и алерт на ней встанут на
+    // цену, которой на бирже нет.
+    price = snapToTick(price, tick);
+    if (price == null) return;
 
     // Уровень, который уже есть, второй раз не добавляем:
     // иначе на одном цене накапливаются неотличимые линии.
-    if (hasHLineAt(hlines, price, priceTolerance)) return;
+    if (hasHLineAt(hlines, price, tick)) return;
 
     const result = await send({
       kind: "hline",

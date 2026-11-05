@@ -1,6 +1,7 @@
 import { loadTickers, loadFlags, saveFlags, removeTicker } from "./tickers.js";
 import { cssVar } from "./utils.js";
 import { api } from "./api.js";
+import { snapToTick } from "./prices.js";
 
 export function initScanner({ chartManager, renderWatchlist, syncTickerSubscriptions }) {
   const btn = document.getElementById("atr-scan-btn");
@@ -99,11 +100,16 @@ export function initScanner({ chartManager, renderWatchlist, syncTickerSubscript
       };
 
       const putLevels = (r) => {
-        if (!(r.high > 0) || !(r.low > 0)) return;
-        const step = r.step || 0;
+        // Дневные уровни — ровно HIGH и LOW дня: шаг к ним не прибавляется,
+        // иначе уровень стоит на цене, по которой не было сделок.
+        const high = snapToTick(r.high, r.step);
+        const low = snapToTick(r.low, r.step);
+        if (!(high > 0) || !(low > 0)) return;
+        const eveHigh = snapToTick(r.evening_high, r.step);
+        const eveLow = snapToTick(r.evening_low, r.step);
         // Уровни и алерты на них ставит сервер одной командой.
         if (typeof chartManager._setAutoLevels === "function") {
-          chartManager._setAutoLevels(r.ticker, r.high + step, r.low - step, r.evening_high, r.evening_low);
+          chartManager._setAutoLevels(r.ticker, high, low, eveHigh, eveLow);
         }
       };
 

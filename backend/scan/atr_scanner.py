@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 
 import requests
 
+from core.prices import snap
+
 MIN_VALUE_RUB = 10_000_000   # минимальный дневной оборот, руб.
 
 _BOARD = "TQBR"
@@ -383,10 +385,13 @@ def scan_futures(tickers, date):
             "atr_rub": round(atr_points * step_price, 2),
             "atr_pct": round((high - low) / close * 100, 2),
             "close": round(close, 4),
-            "high": round(high, 4),
-            "low": round(low, 4),
-            "evening_high": round(evening_high, 4) if evening_high is not None else None,
-            "evening_low": round(evening_low, 4) if evening_low is not None else None,
+            # Уровни — биржевые цены, поэтому округляем их шагом, а не до
+            # произвольных знаков: при шаге 0.0025 два знака сносят цену
+            # с сетки ещё до того, как она станет уровнем.
+            "high": snap(high, step),
+            "low": snap(low, step),
+            "evening_high": snap(evening_high, step) if evening_high is not None else None,
+            "evening_low": snap(evening_low, step) if evening_low is not None else None,
             "value": row["value"] if row["value"] == row["value"] else None,
             "direction": direction,
             "expires": expires,
@@ -520,10 +525,10 @@ def scan_atr(atr_threshold, date=None, futures=None):
                 "atr_points": round(s["atr_points"], 2),
                 "atr_pct": round(s["atr_pct"], 2),
                 "close": round(s["close"], 2),
-                "high": round(s["high"], 2),
-                "low": round(s["low"], 2),
-                "evening_high": round(evening_high, 2) if evening_high is not None else None,
-                "evening_low": round(evening_low, 2) if evening_low is not None else None,
+                "high": snap(s["high"], s["step"]),
+                "low": snap(s["low"], s["step"]),
+                "evening_high": snap(evening_high, s["step"]) if evening_high is not None else None,
+                "evening_low": snap(evening_low, s["step"]) if evening_low is not None else None,
                 "value": s["value"],
                 "direction": s["direction"],
             })
