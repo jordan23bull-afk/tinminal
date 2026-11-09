@@ -61,15 +61,6 @@ TRADES_CHUNK_SEC = 86400
 TRADES_WARN_TARGET = 1000
 
 
-def _market_open(now_ts):
-    """Приблизительное торговое окно MOEX: ПН–ПТ 07:00–23:50 МСК (UTC+3, без DST).
-    Праздники не учитывает — их закрывает троттлинг повторных фетчей."""
-    t = time.gmtime(now_ts + 3 * 3600)
-    if t.tm_wday >= 5:
-        return False
-    return 7 * 60 <= t.tm_hour * 60 + t.tm_min <= 23 * 60 + 50
-
-
 def _quotation_to_float(q):
     return q.units + q.nano / 1e9
 
@@ -266,17 +257,17 @@ class TinkoffSource(IDataSource):
             lookback = max_lookback
         from_time = now - lookback
 
-        # cache: отдаём из DB, если есть последний закрытый бар; на закрытом рынке
-        # идти не за чем; повторный фетч того же (ticker, tf) — не чаще раза в 120с
+        # cache: отдаём из DB, только если последний бар свежий; иначе сеть.
+        # Выходного правила «рынок закрыт — не идём» нет: фьючерсы (например,
+        # IMOEXF) торгуются и в субботу, и база могла устареть на дни.
+        # Повторный фетч того же (ticker, tf) — не чаще раза в 120с
         # (Tinkoff: ≤1000 свечей/вызов, глубина 2h/4h/1d ограничена, минутные квоты)
         db_candles = load_candles(ticker, timeframe, from_time=from_time, limit=target)
         latest_db = get_latest_time(ticker, timeframe)
         if db_candles and latest_db is not None:
             gap = now - latest_db
             last_fetch = self._hist_fetched_at.get((ticker, timeframe), 0)
-            if (gap <= max(300, tf_sec)
-                    or (not _market_open(now) and gap <= 4 * 86400)
-                    or now - last_fetch < 120):
+            if gap <= max(300, tf_sec) or now - last_fetch < 120:
                 logger.info(f"[TINKOFF] Serving {len(db_candles)} candles from DB for {ticker} {timeframe}")
                 return db_candles
 

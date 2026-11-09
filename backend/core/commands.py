@@ -10,6 +10,7 @@
 """
 
 import logging
+import math
 from dataclasses import dataclass, field
 from core import store
 from core import alerts as alerts_module
@@ -205,6 +206,17 @@ def _h_layout_set_grid(payload, record):
     old_grid = state.get("layout") or {}
     old_count = int(old_grid.get("count") or 1)
     old_panels = list(state.get("charts") or [])
+    old_col_sizes = old_grid.get("col_sizes")
+    old_row_sizes = old_grid.get("row_sizes")
+
+    # Весы дорожек: новые строки и колонки получают равные размеры,
+    # пришедшие веса нормируются, неверные заменяются равными.
+    col_sizes = _normalize_sizes(payload.get("col_sizes"), cols)
+    if col_sizes is None:
+        col_sizes = _equal_sizes(cols)
+    row_sizes = _normalize_sizes(payload.get("row_sizes"), rows)
+    if row_sizes is None:
+        row_sizes = _equal_sizes(rows)
 
     charts = list(old_panels)
     incoming = payload.get("charts")
@@ -219,7 +231,10 @@ def _h_layout_set_grid(payload, record):
         charts.append({})
 
     state["charts"] = charts
-    state["layout"] = {"count": count, "rows": rows, "cols": cols, "cells": cells}
+    state["layout"] = {
+        "count": count, "rows": rows, "cols": cols, "cells": cells,
+        "col_sizes": col_sizes, "row_sizes": row_sizes,
+    }
     _rebind_objects(layout["id"], charts, count)
     store.save_layout_state(layout["id"], state)
 
@@ -231,9 +246,86 @@ def _h_layout_set_grid(payload, record):
         "rows": int(old_grid.get("rows") or 1),
         "cols": int(old_grid.get("cols") or 1),
         "cells": old_grid.get("cells") or [[1, 1]],
+        "col_sizes": old_col_sizes,
+        "row_sizes": old_row_sizes,
         "charts": old_panels[:touched],
     }}
     return inverse, [], {"layout": store.get_layout(layout["id"])}
+
+
+def _h_layout_resize(payload, record):
+    """Изменить веса строк или колонок текущей сетки.
+
+    Геометрия клеток не меняется — только пропорции дорожек, поэтому
+    обратная операция та же команда с прежними весами. Живой preview
+    при перетаскивании локальный, коммит идёт одной командой на
+    отпускание рукоятки, иначе история отмены забилась бы промежуточными
+    размерами.
+    """
+    layout = _ensure_layout(payload.get("layout_id"))
+    if not layout:
+        return None, [], {}
+    grid = (layout["state"] or {}).get("layout") or {}
+    rows = int(grid.get("rows") or 1)
+    cols = int(grid.get("cols") or 1)
+
+    new_col = _normalize_sizes(payload.get("col_sizes"), cols)
+    new_row = _normalize_sizes(payload.get("row_sizes"), rows)
+    if payload.get("col_sizes") is not None and new_col is None:
+        raise CommandError(f"Веса колонок должны быть {cols} положительных чисел",
+                           code="invalid_grid")
+    if payload.get("row_sizes") is not None and new_row is None:
+        raise CommandError(f"Веса строк должны быть {rows} положительных чисел",
+                           code="invalid_grid")
+    if new_col is None and new_row is None:
+        raise CommandError("Нет весов для изменения", code="invalid_grid")
+
+    old_col = grid.get("col_sizes")
+    old_row = grid.get("row_sizes")
+    if old_col is None:
+        old_col = [round(1 / cols, 6)] * cols
+    if old_row is None:
+        old_row = [round(1 / rows, 6)] * rows
+    state = layout["state"]
+    state["layout"] = dict(grid)
+    if new_col is not None:
+        state["layout"]["col_sizes"] = new_col
+    if new_row is not None:
+        state["layout"]["row_sizes"] = new_row
+    store.save_layout_state(layout["id"], state)
+
+    inverse_payload = {"layout_id": layout["id"]}
+    if new_col is not None:
+        inverse_payload["col_sizes"] = old_col
+    if new_row is not None:
+        inverse_payload["row_sizes"] = old_row
+    inverse = {"kind": "layout.resize", "payload": inverse_payload}
+    return inverse, [], {"layout": store.get_layout(layout["id"])}
+
+
+def _normalize_sizes(value, n):
+    """Веса дорожек: список из n конечных положительных чисел, сумма 1.
+
+    Неверный формат возвращает None: set_grid заменяет его равными весами,
+    а resize отклоняет командой.
+    """
+    if not isinstance(value, list) or len(value) != n:
+        return None
+    try:
+        sizes = [float(v) for v in value]
+    except (TypeError, ValueError):
+        return None
+    if any(not math.isfinite(v) or v <= 0 for v in sizes):
+        return None
+    total = sum(sizes)
+    if total <= 0:
+        return None
+    return [round(v / total, 6) for v in sizes]
+
+
+def _equal_sizes(n):
+    """Равные веса: сумма 1, каждый — 1/n, округление до 6 знаков."""
+    return [round(1 / n, 6)] * n
 
 
 def _h_layout_delete(payload, record):
@@ -777,6 +869,7 @@ HANDLERS = {
     "layout.create": _h_layout_create,
     "layout.rename": _h_layout_rename,
     "layout.set_grid": _h_layout_set_grid,
+    "layout.resize": _h_layout_resize,
     "layout.delete": _h_layout_delete,
     "object.create": _h_object_create,
     "object.create_many": _h_object_create_many,

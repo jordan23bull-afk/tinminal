@@ -454,6 +454,51 @@
   background: var(--bg-active);
 }
 
+/* Рукоятки ресайза дорожек сетки панелей. Слой сам не ловит мышь:
+   ловят только полоски рукояток, иначе график перестанет реагировать
+   на клики между границами. */
+.layout-resize-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.layout-resize-handle {
+  position: absolute;
+  pointer-events: auto;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+.layout-resize-handle.col {
+  width: 7px;
+  cursor: col-resize;
+}
+
+.layout-resize-handle.row {
+  height: 7px;
+  cursor: row-resize;
+}
+
+.layout-resize-handle:hover,
+.layout-resize-handle.dragging {
+  background: var(--accent-blue);
+  opacity: 0.5;
+}
+
+/* Во время drag курсор соответствует направлению, выделение текста
+   и действия графика не мешают тянуть границу. */
+body.layout-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.layout-resizing .layout-resize-handle.row {
+  cursor: row-resize;
+}
+
 /* Плавающий тулбар настройки линии: без затемнения, у самой линии. */
 .line-panel {
   position: fixed;

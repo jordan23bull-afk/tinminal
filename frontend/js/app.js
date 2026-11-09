@@ -143,6 +143,15 @@ const chartManager = new ChartManager("charts-grid", onChartChange);
 chartManager.onActiveChartChange = syncWatchlistLiveStatus;
 const wsClient = new WSClient();
 const layoutManager = new LayoutManager(document.getElementById("charts-grid"));
+// Ресайз дорожек коммитится одной командой на отпускание рукоятки.
+// Ошибка — возвращаем прежнюю геометрию из состояния раскладки.
+layoutManager.onResizeCommit = (payload) => {
+  if (!store.layoutId) return;
+  commands.layoutResize(store.layoutId, payload).catch((err) => {
+    log("Не удалось изменить размер дорожек:", err.message);
+    layoutManager.applyGrid(store.layout.state.layout);
+  });
+};
 
 // ------------------------------------------------ server-side POC
 chartManager.onPocNeeds = (needs) => {

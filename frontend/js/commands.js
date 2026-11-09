@@ -160,6 +160,10 @@ export const commands = {
   // Геометрия панелей — часть состояния раскладки, поэтому меняется
   // командой: её можно отменить и она переживает перезагрузку.
   setGrid: (layoutId, grid) => request("layout.set_grid", { layout_id: layoutId, ...grid }),
+  // Веса дорожек: живой preview при drag — локальный CSS, коммит —
+  // одной командой на отпускание рукоятки.
+  layoutResize: (layoutId, sizes) =>
+    request("layout.resize", { layout_id: layoutId, ...sizes }),
 
   objectCreate: (payload) => request("object.create", payload),
   objectCreateMany: (layoutId, objects) =>

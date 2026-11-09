@@ -1,3 +1,6 @@
+import { equalSizes, sameCells, placeCells, MIN_TRACK_PX } from "./layout-grid.js";
+import { LayoutResizer } from "./layout-resize.js";
+
 const LAYOUTS = {
   1: [
     { rows: 1, cols: 1, cells: [[1, 1]] },
@@ -10,6 +13,10 @@ const LAYOUTS = {
     { rows: 1, cols: 3, cells: [[1, 1], [1, 1], [1, 1]] },
     { rows: 2, cols: 2, cells: [[1, 1], [1, 1], [1, 2]] },
     { rows: 2, cols: 2, cells: [[1, 2], [1, 1], [1, 1]] },
+    // Слева один высокий график, справа два друг под другом.
+    { rows: 2, cols: 2, cells: [[2, 1], [1, 1], [1, 1]] },
+    // Зеркально: слева два друг под другом, справа один высокий.
+    { rows: 2, cols: 2, cells: [[1, 1], [2, 1], [1, 1]] },
   ],
   4: [
     { rows: 2, cols: 2, cells: [[1, 1], [1, 1], [1, 1], [1, 1]] },
@@ -28,11 +35,18 @@ const LAYOUTS = {
   ],
 };
 
+export { MIN_TRACK_PX };
+
 export class LayoutManager {
-  constructor(gridElement) {
+  constructor(gridElement, opts = {}) {
     this.grid = gridElement;
-    this.currentLayout = { rows: 1, cols: 1, cells: [[1, 1]] };
+    this.currentLayout = { rows: 1, cols: 1, cells: [[1, 1]],
+      col_sizes: [1], row_sizes: [1] };
     this.currentOptionIndex = 0;
+    // Вызывается при отпускании рукоятки ресайза: живой preview —
+    // локальный CSS, а коммит должен идти одной командой на сервер.
+    this.onResizeCommit = opts.onResizeCommit || null;
+    this.resizer = new LayoutResizer(this, gridElement);
   }
 
   getLayouts() {
@@ -55,6 +69,8 @@ export class LayoutManager {
       rows: layout.rows,
       cols: layout.cols,
       cells: layout.cells.map((cell) => [...cell]),
+      col_sizes: equalSizes(layout.cols),
+      row_sizes: equalSizes(layout.rows),
     };
   }
 
@@ -62,21 +78,37 @@ export class LayoutManager {
    * Вариант сетки для выпадающего списка: по числу панелей и размеру.
    *
    * Сетка приходит из состояния, а варианты живут в таблице клиента,
-   * поэтому вариант находится сопоставлением.
+   * поэтому вариант находится сопоставлением клеток. Размеры дорожек
+   * на выбор варианта не влияют: их пользователь меняет ресайзом.
    */
   optionForGrid(grid) {
     if (!grid) return 0;
     const variants = LAYOUTS[grid.count] || [];
     const index = variants.findIndex(
+      (v) => v.rows === grid.rows && v.cols === grid.cols &&
+        sameCells(v.cells, grid.cells)
+    );
+    if (index >= 0) return index;
+    // Старое состояние без точного совпадения клеток: определяем
+    // вариант по размеру, как раньше, вместо сброса на первый.
+    const legacy = variants.findIndex(
       (v) => v.rows === grid.rows && v.cols === grid.cols
     );
-    return index < 0 ? 0 : index;
+    return legacy < 0 ? 0 : legacy;
   }
 
   /** Применить сетку из состояния раскладки. */
   applyGrid(grid) {
     if (!grid || !grid.rows || !grid.cols || !Array.isArray(grid.cells)) return;
-    this.currentLayout = { rows: grid.rows, cols: grid.cols, cells: grid.cells };
+    const cols = Math.max(1, Number(grid.cols) || 1);
+    const rows = Math.max(1, Number(grid.rows) || 1);
+    this.currentLayout = {
+      rows,
+      cols,
+      cells: grid.cells,
+      col_sizes: this._cleanSizes(grid.col_sizes, cols),
+      row_sizes: this._cleanSizes(grid.row_sizes, rows),
+    };
     this.currentOptionIndex = this.optionForGrid(grid);
     this.applyLayout();
   }
@@ -85,10 +117,18 @@ export class LayoutManager {
     const layouts = LAYOUTS[count];
     if (!layouts || optionIndex >= layouts.length) return;
 
-    this.currentLayout = layouts[optionIndex];
+    const layout = layouts[optionIndex];
+    // Смена варианта — новая геометрия, размеры дорожек сбрасываются.
+    this.currentLayout = {
+      rows: layout.rows,
+      cols: layout.cols,
+      cells: layout.cells,
+      col_sizes: equalSizes(layout.cols),
+      row_sizes: equalSizes(layout.rows),
+    };
     this.currentOptionIndex = optionIndex;
 
-    const children = Array.from(this.grid.children);
+    const children = this._panelChildren();
     children.forEach(child => {
       child.style.gridRow = '';
       child.style.gridColumn = '';
@@ -101,7 +141,7 @@ export class LayoutManager {
 
   applyLayout() {
     const layout = this.currentLayout;
-    const children = Array.from(this.grid.children);
+    const children = this._panelChildren();
     if (!layout || children.length === 0) return;
 
     if (children.length === 1) {
@@ -111,27 +151,62 @@ export class LayoutManager {
       this.grid.style.gap = '';
       children[0].style.gridRow = '';
       children[0].style.gridColumn = '';
+      this.resizer?.refresh();
       return;
     }
 
     this.grid.style.display = 'grid';
     this.grid.style.gap = '2px';
-    this.grid.style.gridTemplateColumns = `repeat(${layout.cols}, 1fr)`;
-    this.grid.style.gridTemplateRows = `repeat(${layout.rows}, 1fr)`;
+    this.grid.style.gridTemplateColumns =
+      layout.col_sizes.map((s) => `${s}fr`).join(' ');
+    this.grid.style.gridTemplateRows =
+      layout.row_sizes.map((s) => `${s}fr`).join(' ');
 
-    let cellIndex = 0;
-    const maxCells = Math.min(layout.cells.length, children.length);
+    // Клетка может накрывать несколько строк или колонок, поэтому
+    // размещение идёт по первой свободной клетке, а не построчно.
+    const placements = placeCells(
+      layout.rows, layout.cols, layout.cells, children.length
+    );
+    placements.forEach((p, i) => {
+      children[i].style.gridRow = `${p.row + 1} / span ${p.rowSpan}`;
+      children[i].style.gridColumn = `${p.col + 1} / span ${p.colSpan}`;
+    });
 
-    for (let r = 0; r < layout.rows && cellIndex < maxCells; r++) {
-      let c = 0;
-      while (c < layout.cols && cellIndex < maxCells) {
-        const [rowSpan, colSpan] = layout.cells[cellIndex];
-        children[cellIndex].style.gridRow = `${r + 1} / span ${rowSpan}`;
-        children[cellIndex].style.gridColumn = `${c + 1} / span ${colSpan}`;
-        c += colSpan;
-        cellIndex++;
-      }
+    this.resizer?.refresh();
+  }
+
+  /** Панели грида: слой ресайза не панель и в расчётах не участвует. */
+  _panelChildren() {
+    return Array.from(this.grid.children).filter(
+      (el) => el.classList.contains("chart-wrapper")
+    );
+  }
+
+  /**
+   * Живой preview во время drag: пиксельные размеры переводятся в веса,
+   * геометрия пересобирается, на сервер ничего не шлётся.
+   */
+  setTrackSizes(axis, sizes) {
+    const layout = this.currentLayout;
+    if (!layout) return;
+    if (axis === "col") {
+      layout.col_sizes = this._cleanSizes(sizes, layout.cols);
+    } else {
+      layout.row_sizes = this._cleanSizes(sizes, layout.rows);
     }
+    this.applyLayout();
+  }
+
+  /**
+   * Коммит размеров: одна команда, один шаг отмены. Живой preview
+   * до этого момента был только локальным CSS.
+   */
+  commitTrackSizes(axis, sizes) {
+    if (!this.onResizeCommit) return;
+    const payload = axis === "col"
+      ? { col_sizes: sizes }
+      : { row_sizes: sizes };
+    this.onResizeCommit(payload);
   }
 
   autoLayout(chartCount) {
@@ -156,5 +231,15 @@ export class LayoutManager {
     } else {
       this.setLayoutByCount(12, 0);
     }
+  }
+
+  /** Весы дорожек из состояния; неверные заменяются равными. */
+  _cleanSizes(value, n) {
+    if (!Array.isArray(value) || value.length !== n) return equalSizes(n);
+    const nums = value.map(Number);
+    if (nums.some((v) => !Number.isFinite(v) || v <= 0)) return equalSizes(n);
+    const total = nums.reduce((a, b) => a + b, 0);
+    if (total <= 0) return equalSizes(n);
+    return nums.map((v) => v / total);
   }
 }

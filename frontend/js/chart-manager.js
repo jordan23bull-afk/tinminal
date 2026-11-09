@@ -834,12 +834,10 @@ export class ChartManager {
     const chartObj = this.charts.get(id);
     if (!chartObj) { log(`Chart ${id} not found`); return; }
 
-    // ponytail: preserve zoom/pan across data reloads (e.g. tab switch)
-    const hadData = chartObj.mainSeries.data().length > 0;
-    let savedRange = null;
-    if (hadData) {
-      try { savedRange = chartObj.chart.timeScale().getVisibleRange(); } catch {}
-    }
+    // Вид сохраняем в логических барах: при смене таймфрейма датасет другой
+    // длины, и восстановление по абсолютному времени зажимало вид к первой
+    // свече, а последнюю прижимало к правому краю.
+    const savedView = this._saveView(chartObj);
 
     chartObj.mainSeries.setData(this._formatDataForType(candles, chartObj.chartType));
     chartObj.volumeSeries.setData(this._formatVolumeData(candles));
@@ -860,20 +858,41 @@ export class ChartManager {
       // графики, и обращение к удалённому роняет библиотеку.
       if (!this.charts.has(id)) return;
       chartObj.chart.priceScale('right').applyOptions({ autoScale: true });
-      if (savedRange) {
-        const data = chartObj.mainSeries.data();
-        if (data.length === 0) return;
-        const firstTime = data[0].time;
-        const lastTime = data[data.length - 1].time;
-        const from = Math.max(savedRange.from, firstTime);
-        const to = Math.min(savedRange.to, lastTime);
-        if (from < to) {
-          chartObj.chart.timeScale().setVisibleRange({ from, to });
-        } else {
-          chartObj.chart.timeScale().fitContent();
-        }
-      }
-      // ponytail: first load only — fit + scroll right; updates preserve view
+      // Первый запуск — подгоняем вид; обновления и смена данных — нет.
+      this._restoreView(chartObj, savedView);
+    });
+  }
+
+  /**
+   * Снимок вида: сколько баров видно и где относительно правого края стоит
+   * последний бар. Этого достаточно, чтобы смена таймфрейма или типа графика
+   * не двигала последнюю свечу и не сжимала вид под всю историю.
+   */
+  _saveView(chartObj) {
+    const data = chartObj.mainSeries.data();
+    if (!data.length) return null;
+    try {
+      const logical = chartObj.chart.timeScale().getVisibleLogicalRange();
+      if (!logical) return null;
+      return { from: logical.from, to: logical.to, lastIdx: data.length - 1 };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Восстановить вид по снимку: тот же зум и то же место последнего бара. */
+  _restoreView(chartObj, savedView) {
+    const data = chartObj.mainSeries.data();
+    if (!data.length || !savedView) {
+      chartObj.chart.timeScale().fitContent();
+      return;
+    }
+    const newLastIdx = data.length - 1;
+    const offset = savedView.to - savedView.lastIdx;
+    const width = savedView.to - savedView.from;
+    chartObj.chart.timeScale().setVisibleLogicalRange({
+      from: newLastIdx + offset - width,
+      to: newLastIdx + offset,
     });
   }
 
@@ -938,6 +957,9 @@ export class ChartManager {
     const chartObj = this.charts.get(id);
     if (!chartObj) return;
 
+    // Вид пользователя не двигаем: смена типа не сдвигает и не сжимает график.
+    const savedView = this._saveView(chartObj);
+
     // Линии живут на серии и умирают вместе с ней. Снимок обязан помнить
     // не только цену и вид, но и метки: без _objectId/_autoLevel общая
     // синхронизация не узнаёт линию и нарисует рядом вторую.
@@ -961,8 +983,6 @@ export class ChartManager {
     if (chartObj.config._lastCandles) {
       newSeries.setData(this._formatDataForType(chartObj.config._lastCandles, newType));
       if (chartObj.sessionLine) chartObj.sessionLine.updateData(chartObj.config._lastCandles);
-      chartObj.chart.timeScale().fitContent();
-      chartObj.chart.timeScale().scrollToPosition(5, false);
     }
 
     // Восстанавливаем только на этой панели: addHorizontalLine разложил бы
@@ -971,6 +991,13 @@ export class ChartManager {
     // Дальше состояние сверяется со store: вид линии зависит ещё и от
     // алерта, поэтому источником истины остаётся серверный объект.
     this.onDrawingsChanged?.();
+
+    requestAnimationFrame(() => {
+      // График могли снять, пока ждали кадр: перестроение панелей убирает
+      // графики, и обращение к удалённому роняет библиотеку.
+      if (!this.charts.has(id)) return;
+      this._restoreView(chartObj, savedView);
+    });
     log(`Chart ${id} type changed to ${newType}`);
   }
 
