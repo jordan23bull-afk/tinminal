@@ -725,8 +725,10 @@ document.querySelectorAll(".tool-btn[data-tool]").forEach(btn => {
 });
 
 // Magnet toggle
+// Состояние держит менеджер: кнопка только переключает, а setMagnetMode
+// применяет режим перекрестия ко всем панелям живьём.
 document.getElementById("magnet-btn").addEventListener("click", function() {
-  chartManager._magnetOn = !chartManager._magnetOn;
+  chartManager.setMagnetMode(!chartManager._magnetOn);
   this.classList.toggle("active", chartManager._magnetOn);
 });
 

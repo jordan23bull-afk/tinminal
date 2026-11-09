@@ -51,6 +51,8 @@ export function eventToLocal(chartObj, event) {
 /**
  * Привязка к ближайшей точке свечи (магнит).
  * Возвращает цену уровня, если свеча найдена, иначе исходную цену.
+ * Кандидаты — все четыре ключевые точки (O/H/L/C), как у штатного режима
+ * перекрестия MagnetOHLC: линия ложится туда же, куда смотрит магнит.
  */
 export function magnetPrice(chartObj, price) {
   if (!chartObj || price == null) return price;
@@ -60,7 +62,12 @@ export function magnetPrice(chartObj, price) {
   if (!candles) return price;
   const candle = candles.find((c) => c.time === time);
   if (!candle) return price;
-  const toHigh = Math.abs(price - candle.high);
-  const toLow = Math.abs(price - candle.low);
-  return toHigh <= toLow ? candle.high : candle.low;
+  let nearest = null;
+  for (const value of [candle.open, candle.high, candle.low, candle.close]) {
+    if (value == null || Number.isNaN(value)) continue;
+    if (nearest == null || Math.abs(price - value) < Math.abs(price - nearest)) {
+      nearest = value;
+    }
+  }
+  return nearest == null ? price : nearest;
 }

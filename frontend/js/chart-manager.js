@@ -711,7 +711,10 @@ export class ChartManager {
         },
       },
       grid: { vertLines: { color: "#242832" }, horzLines: { color: "#242832" } },
-      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      // Магнит — штатный режим библиотеки: горизонтальная линия
+      // перекрестия прилипает к ближайшей из O/H/L/C свечи под курсором.
+      // Состояние держит setMagnetMode, новые панели его наследуют.
+      crosshair: { mode: this._magnetOn ? LightweightCharts.CrosshairMode.MagnetOHLC : LightweightCharts.CrosshairMode.Normal },
       timeScale: {
         timeVisible: true, secondsVisible: false,
         barSpacing: 8,
@@ -1064,6 +1067,30 @@ export class ChartManager {
   resetTool() {
     this._activeTool = "crosshair";
     if (this.onToolReset) this.onToolReset();
+  }
+
+  /**
+   * Включить/выключить магнит перекрестия.
+   *
+   * Магнит — штатный режим библиотеки MagnetOHLC: горизонтальная линия
+   * перекрестия прилипает к ближайшей из цен O/H/L/C свечи под курсором,
+   * время остаётся свободным. Режим применяется живьём через applyOptions
+   * к существующим графикам и читается в createChart для новых панелей.
+   * Состояние сессионное, как активный инструмент: перезагрузка сбрасывает.
+   */
+  setMagnetMode(on) {
+    this._magnetOn = !!on;
+    const mode = this._magnetOn
+      ? LightweightCharts.CrosshairMode.MagnetOHLC
+      : LightweightCharts.CrosshairMode.Normal;
+    for (const [, chartObj] of this.charts) {
+      // График могли снять между щелчком и применением: обращение роняет библиотеку.
+      try {
+        chartObj.chart.applyOptions({ crosshair: { mode } });
+      } catch (e) {
+        /* график уже снят — новая панель создастся в текущем режиме */
+      }
+    }
   }
 
   /**
